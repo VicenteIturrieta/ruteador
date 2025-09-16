@@ -1,5 +1,7 @@
 import openrouteservice
+from openrouteservice import convert
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+import folium
 
 client = openrouteservice.Client(key="eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU5MjExYjU5NjgyNTRhNmM5OTZjY2Q1NzgwMzMwMDc1IiwiaCI6Im11cm11cjY0In0=")
 
@@ -17,7 +19,7 @@ matrix = client.distance_matrix(
     units="m"  # unidades: m=metros, km=kilómetros, mi=millas
 )
 
-duration = matrix['durations']  # Segundos
+durations = matrix['durations']  # Segundos
 distances = matrix['distances']  # Metros
 
 print("Duraciones (minutos):")
@@ -66,7 +68,7 @@ solution = routing.SolveWithParameters(search_parameters)
 # solución
 if solution:
     index = routing.Start(0)
-    plan_output = 'Ruta óptima:\n'
+    plan_output = '\nRuta óptima:\n\n'
     route_distance = 0
     while not routing.IsEnd(index):
         plan_output += f" {manager.IndexToNode(index)} ->"
@@ -75,6 +77,43 @@ if solution:
         route_distance += routing.GetArcCostForVehicle(previous_index, index, 0)
     plan_output += f" {manager.IndexToNode(index)}\n"
     plan_output += f"Tiempo total: {route_distance} segundos"
-    print(plan_output)
+    #print(plan_output)
 else:
     print("No se encontró solución")
+
+# Visualización con Folium
+
+# Construir la ruta como lista de índices
+ruta_optima_indices = []
+index = routing.Start(0)
+while not routing.IsEnd(index):
+    ruta_optima_indices.append(manager.IndexToNode(index))
+    index = solution.Value(routing.NextVar(index))
+ruta_optima_indices.append(manager.IndexToNode(index))  # volver al depósito
+
+
+m = folium.Map(location=[-36.562653, -72.093775], zoom_start=12)
+
+# Dibujar la ruta real siguiendo calles
+for i in range(len(ruta_optima_indices)-1):
+    start = locations[ruta_optima_indices[i]]
+    end = locations[ruta_optima_indices[i+1]]
+    route = client.directions(
+        coordinates=[start, end],
+        profile='driving-hgv',
+        format='geojson'
+    )
+    folium.GeoJson(route, style_function=lambda x: {'color': 'blue', 'weight': 5}).add_to(m)
+
+print("\nRuta óptima:", ruta_optima_indices)
+tiempo_total = sum(
+    durations[ruta_optima_indices[i]][ruta_optima_indices[i+1]] 
+    for i in range(len(ruta_optima_indices)-1)
+)
+print(f"Tiempo total: {tiempo_total/60:.2f} minutos")
+
+# Marcar clientes
+for i, loc in enumerate(locations):
+    folium.Marker([loc[1], loc[0]], popup=f"Cliente {i}").add_to(m)
+
+m.save("ruta_calles.html")
