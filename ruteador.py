@@ -32,9 +32,7 @@ print("\nDistancias (metros):")
 for row in distances:
     print(row)
 
-# ----------------------------
 # Datos para OR-Tools
-# ----------------------------
 def create_data_model():
     data = {}
     data['time_matrix'] = durations
