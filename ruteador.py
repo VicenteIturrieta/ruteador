@@ -62,7 +62,7 @@ def get_camiones():
     return db_query("SELECT id, patente, tipo FROM camiones ORDER BY id")
 
 def get_clientes():
-    return db_query("SELECT id, nombre, lon, lat, tipo_camion FROM clientes")
+    return db_query("SELECT id, nombre, lon, lat, tipo_camion, cd, zona FROM clientes")
 
 def obtener_o_crear_camion(patente, tipo):
     """Obtiene el ID de un camión si existe, si no, lo crea."""
@@ -184,7 +184,6 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids):
         return {'error': f"Ocurrió un error inesperado: {e}"}
 
 # --- INTERFAZ GRÁFICA (Clase para organizar la GUI) ---
-# --- INTERFAZ GRÁFICA (Clase para organizar la GUI) ---
 class App:
     def __init__(self, root):
         self.root = root
@@ -201,29 +200,53 @@ class App:
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
 
-        # Sección del Camión
-        camion_frame = ttk.LabelFrame(main_frame, text="1. Datos del Camión", padding="10")
-        camion_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        # --- 0. Selección de CD ---
+        cd_frame = ttk.LabelFrame(main_frame, text="0. Selecciona CD", padding="10")
+        cd_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         
+
+        ttk.Label(cd_frame, text="Centro de Distribución:").grid(row=0, column=0, sticky="w")
+        self.combo_cd = ttk.Combobox(cd_frame, values=[], state="readonly")
+        self.combo_cd.grid(row=0, column=1, padx=5, pady=5)
+        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
+        ttk.Button(cd_frame, text="Agregar CD", command=self.agregar_cd).grid(row=0, column=2, padx=5)
+        ttk.Button(cd_frame, text="Agregar Zona", command=self.agregar_zona).grid(row=1, column=2, padx=5)
+
+
+
+        # --- Selector de zona ---
+        ttk.Label(cd_frame, text="Zona:").grid(row=1, column=0, sticky="w")
+        self.combo_zona = ttk.Combobox(cd_frame, values=[], state="readonly")
+        self.combo_zona.grid(row=1, column=1, padx=5, pady=5)
+        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
+
+        ttk.Label(cd_frame, text="Centro de Distribución:").grid(row=0, column=0, sticky="w")
+        self.combo_cd = ttk.Combobox(cd_frame, values=[], state="readonly")
+        self.combo_cd.grid(row=0, column=1, padx=5, pady=5)
+        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
+
+        # --- 1. Datos del Camión ---
+        camion_frame = ttk.LabelFrame(main_frame, text="1. Datos del Camión", padding="10")
+        camion_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+
         ttk.Label(camion_frame, text="Patente:").grid(row=0, column=0, sticky="w")
         self.entry_patente = ttk.Entry(camion_frame, width=20)
         self.entry_patente.grid(row=0, column=1, padx=5, pady=5)
 
         ttk.Label(camion_frame, text="Tipo de camión:").grid(row=1, column=0, sticky="w")
-        ## CAMBIO: Se revierte la lista a los tipos originales.
         self.combo_tipo = ttk.Combobox(camion_frame, values=["Largo", "Corto", "Dolly"], state="readonly")
         self.combo_tipo.current(0)
         self.combo_tipo.grid(row=1, column=1, padx=5, pady=5)
-        ## CAMBIO: La siguiente línea fue eliminada, ya no se asocia un evento al combobox.
-        # self.combo_tipo.bind("<<ComboboxSelected>>", self.actualizar_lista_clientes)
 
         ttk.Button(camion_frame, text="Ver camiones registrados", command=self.mostrar_camiones).grid(row=0, column=2, padx=10)
 
-        # Sección de Clientes
+        # --- 2. Selección de Clientes ---
         clientes_frame = ttk.LabelFrame(main_frame, text="2. Selección de Clientes", padding="10")
-        clientes_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        main_frame.grid_rowconfigure(1, weight=1)
+        clientes_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        main_frame.grid_rowconfigure(2, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
+        ttk.Button(clientes_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(pady=5)
+
 
         scrollbar = ttk.Scrollbar(clientes_frame, orient=tk.VERTICAL)
         self.listbox_clientes = tk.Listbox(clientes_frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set, width=50, height=15)
@@ -231,32 +254,175 @@ class App:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox_clientes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Sección de Resultados
+        # --- 3. Resultados de la Ruta ---
         salida_frame = ttk.LabelFrame(main_frame, text="3. Resultados de la Ruta", padding="10")
-        salida_frame.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
+        salida_frame.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
         main_frame.grid_columnconfigure(1, weight=1)
+        
 
         self.salida_texto = tk.Text(salida_frame, height=15, width=60, state="disabled")
         self.salida_texto.pack(fill=tk.BOTH, expand=True)
-        
-        # Botón para calcular
+
+        # --- Botón de Calcular ---
         self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
-        self.btn_calcular.grid(row=2, column=0, columnspan=2, pady=10)
+        self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
 
         # Estilo para el botón
         style = ttk.Style()
         style.configure("Accent.TButton", font=("Helvetica", 12, "bold"))
 
-    def cargar_datos_iniciales(self):
-        """Carga la lista completa de clientes y la muestra en la Listbox."""
-        ## CAMBIO: La lógica de mostrar clientes ahora está aquí directamente.
-        self.todos_los_clientes = get_clientes()
+    def agregar_cliente(self):
+        """Abre un popup para agregar un nuevo cliente a la zona seleccionada"""
+        cd_seleccionado = self.combo_cd.get()
+        zona_seleccionada = self.combo_zona.get()
+        if not cd_seleccionado or not zona_seleccionada:
+            messagebox.showwarning("Error", "Primero debes seleccionar un CD y una Zona")
+            return
+
+        def guardar_cliente():
+            nombre = entry_nombre.get().strip()
+            lon = entry_lon.get().strip()
+            lat = entry_lat.get().strip()
+            tipo_camion = combo_tipo.get()
+
+            if not nombre or not lon or not lat:
+                messagebox.showwarning("Error", "Todos los campos son obligatorios")
+                return
+            try:
+                lon = float(lon)
+                lat = float(lat)
+            except ValueError:
+                messagebox.showwarning("Error", "Longitud y Latitud deben ser números válidos")
+                return
+            
+            # Insertar en la base de datos
+            db_execute(
+                "INSERT INTO clientes (nombre, lon, lat, tipo_camion, cd, zona) VALUES (?, ?, ?, ?, ?, ?)",
+                (nombre, lon, lat, tipo_camion, cd_seleccionado, zona_seleccionada)
+            )
+            top.destroy()
+            self.cargar_clientes_por_zona()  # refrescar lista de clientes
+
+        top = tk.Toplevel(self.root)
+        top.title(f"Agregar Cliente a {cd_seleccionado} / {zona_seleccionada}")
+        top.geometry("275x350")
+
+        tk.Label(top, text="Nombre:").pack(pady=5)
+        entry_nombre = tk.Entry(top)
+        entry_nombre.pack(pady=5)
+
+        tk.Label(top, text="Longitud:").pack(pady=5)
+        entry_lon = tk.Entry(top)
+        entry_lon.pack(pady=5)
+
+        tk.Label(top, text="Latitud:").pack(pady=5)
+        entry_lat = tk.Entry(top)
+        entry_lat.pack(pady=5)
+
+        tk.Label(top, text="Tipo de camión:").pack(pady=5)
+        combo_tipo = ttk.Combobox(top, values=["Largo", "Corto", "Dolly"], state="readonly")
+        combo_tipo.current(0)
+        combo_tipo.pack(pady=5)
+
+        tk.Button(top, text="Guardar", command=guardar_cliente).pack(pady=10)
+
+    def agregar_zona(self):
+        """Abre una ventana para agregar una nueva zona al CD seleccionado"""
+        cd_seleccionado = self.combo_cd.get()
+        if not cd_seleccionado:
+            messagebox.showwarning("Error", "Primero debes seleccionar un CD")
+            return
+
+        def guardar_zona():
+            nueva_zona = entry_zona.get().strip()
+            if not nueva_zona:
+                messagebox.showwarning("Error", "El nombre de la zona no puede estar vacío")
+                return
+            # Verificar si ya existe en el combobox
+            zonas_actuales = [z for z in self.combo_zona['values']]
+            if nueva_zona in zonas_actuales:
+                messagebox.showwarning("Error", "Esta zona ya existe para este CD")
+                return
+            # Agregar zona
+            zonas_actuales.append(nueva_zona)
+            self.combo_zona['values'] = sorted(zonas_actuales)
+            self.combo_zona.set(nueva_zona)
+            top.destroy()
+            self.listbox_clientes.delete(0, tk.END)  # Limpiar lista de clientes
+
+        top = tk.Toplevel(self.root)
+        top.title(f"Agregar Zona a {cd_seleccionado}")
+        top.geometry("300x100")
+        tk.Label(top, text="Zona:").pack(pady=5)
+        entry_zona = tk.Entry(top)
+        entry_zona.pack(pady=5)
+        tk.Button(top, text="Guardar", command=guardar_zona).pack(pady=5)
+
+    def agregar_cd(self):
+        """Abre una ventana para agregar un nuevo CD"""
+        def guardar_cd():
+            nuevo_cd = entry_cd.get().strip()
+            if not nuevo_cd:
+                messagebox.showwarning("Error", "El nombre del CD no puede estar vacío")
+                return
+            # Comprobar si ya existe
+            cds_actuales = [c for c in self.combo_cd['values']]
+            if nuevo_cd in cds_actuales:
+                messagebox.showwarning("Error", "Este CD ya existe")
+                return
+            # Actualizar combobox
+            cds_actuales.append(nuevo_cd)
+            self.combo_cd['values'] = sorted(cds_actuales)
+            self.combo_cd.set(nuevo_cd)
+            top.destroy()
+            self.cargar_zonas_por_cd()  # refrescar zonas
+
+        top = tk.Toplevel(self.root)
+        top.title("Agregar CD")
+        top.geometry("300x100")
+        tk.Label(top, text="CD:").pack(pady=5)
+        entry_cd = tk.Entry(top)
+        entry_cd.pack(pady=5)
+        tk.Button(top, text="Guardar", command=guardar_cd).pack(pady=5)
+
+    def cargar_zonas_por_cd(self, event=None):
+        """Carga las zonas disponibles según el CD seleccionado"""
+        cd_seleccionado = self.combo_cd.get()
+        if not cd_seleccionado:
+            return
+        
+        # Filtrar zonas únicas de ese CD
+        zonas = sorted(set([c[6] for c in get_clientes() if c[5] == cd_seleccionado]))
+        self.combo_zona['values'] = zonas
+        self.combo_zona.set("")  # limpiar selección previa
+        
+        # Limpiar la lista de clientes
         self.listbox_clientes.delete(0, tk.END)
-        for cliente in self.todos_los_clientes:
-            # cliente[4] es 'tipo_camion' del cliente, lo mostramos para información.
-            self.listbox_clientes.insert(tk.END, f"{cliente[0]} - {cliente[1]} ({cliente[4]})")
+
+    def cargar_clientes_por_zona(self, event=None):
+        """Carga los clientes de un CD y Zona seleccionados"""
+        cd_seleccionado = self.combo_cd.get()
+        zona_seleccionada = self.combo_zona.get()
+        if not cd_seleccionado or not zona_seleccionada:
+            return
+
+        clientes_filtrados = [
+            c for c in get_clientes() if c[5] == cd_seleccionado and c[6] == zona_seleccionada
+        ]
+        self.todos_los_clientes = clientes_filtrados
+
+        self.listbox_clientes.delete(0, tk.END)
+        for c in clientes_filtrados:
+            self.listbox_clientes.insert(tk.END, f"{c[0]} - {c[1]} ({c[6]})")
 
     ## CAMBIO: El método "actualizar_lista_clientes" fue eliminado por completo.
+    def cargar_datos_iniciales(self):
+        """Carga la lista de CDs"""
+        cds = sorted(set([c[5] for c in get_clientes()]))
+        self.combo_cd['values'] = cds
+        if cds:
+            self.combo_cd.current(0)
+            self.cargar_zonas_por_cd()  # al cargar inicial, dispara zonas
 
     def mostrar_camiones(self):
         """Muestra una ventana con todos los camiones registrados."""
