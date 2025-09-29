@@ -1,2 +1,4 @@
 config.ini
 rutas.db
+.venv
+__pycache__/
