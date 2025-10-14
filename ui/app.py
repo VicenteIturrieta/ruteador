@@ -5,7 +5,6 @@ import re
 import webbrowser
 from datetime import datetime
 import sqlite3
-from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 # Importaciones de los otros módulos del proyecto
 from db import db_query, db_execute
@@ -113,10 +112,6 @@ class App:
         self.style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"))
         self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
         self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
-
-    # El resto de los métodos de la clase App (cargar_y_filtrar_despachos, mostrar_historial_rutas, etc.)
-    # se mantienen aquí, sin cambios significativos en su lógica interna, solo en cómo llaman a las funciones
-    # que ahora están en otros módulos.
     
     def refrescar_datos_locales_y_ui(self):
         """Carga todos los datos de clientes y actualiza los combos de la UI."""
@@ -125,14 +120,15 @@ class App:
                 c.id, c.nombre, c.lon, c.lat, c.tipo_camion, z.cd, z.nombre, c.destination_id, c.dias_reparto
             FROM 
                 clientes c 
-            JOIN 
+            LEFT JOIN 
                 zonas z ON c.zona_id = z.id
         """)
         self.cargar_cds()
 
     def cargar_cds(self):
         """Puebla el combobox de Centros de Distribución."""
-        cds = sorted(list(set(c[5] for c in self.all_clientes_data if c[5])))
+        cds_query = db_query("SELECT DISTINCT cd FROM zonas ORDER BY cd")
+        cds = [row[0] for row in cds_query]
         self.combo_cd['values'] = cds
         if cds:
             self.combo_cd.set(cds[0])
@@ -143,7 +139,8 @@ class App:
     def cargar_zonas_por_cd(self, event=None):
         """Puebla el combobox de Zonas basado en el CD seleccionado."""
         cd_seleccionado = self.combo_cd.get()
-        zonas = sorted(list(set(c[6] for c in self.all_clientes_data if c[5] == cd_seleccionado)))
+        zonas_query = db_query("SELECT nombre FROM zonas WHERE cd = ? ORDER BY nombre", (cd_seleccionado,))
+        zonas = [row[0] for row in zonas_query]
         self.combo_zona['values'] = zonas
         if zonas:
             self.combo_zona.set(zonas[0])
@@ -157,11 +154,14 @@ class App:
         zona = self.combo_zona.get()
         self.listbox_clientes.delete(0, tk.END)
         
+        # Filtra los datos ya cargados en memoria
         clientes_filtrados = [c for c in self.all_clientes_data if c[5] == cd and c[6] == zona]
-        clientes_filtrados.sort(key=lambda x: x[1])
+        clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}") # Ordena por nombre o por ID de local
 
         for cliente in clientes_filtrados:
-            self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {cliente[1]}")
+            # cliente[1] es nombre, cliente[7] es destination_id
+            display_name = cliente[1] if cliente[1] else f"Local #{cliente[7]}"
+            self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
 
     def cargar_y_filtrar_despachos(self):
         """Maneja la carga del Excel y filtra la lista de clientes."""
@@ -181,19 +181,19 @@ class App:
         clientes_para_hoy = []
         for cliente in self.all_clientes_data:
             cliente_id, nombre, _, _, _, _, _, dest_id, dias_reparto = cliente
-            # Chequea si el cliente tiene despacho en el Excel Y si el día de reparto coincide.
             if dest_id in self.despachos_pendientes:
                 if not dias_reparto or hoy in dias_reparto:
                     total_cajas = self.despachos_pendientes[dest_id]
-                    clientes_para_hoy.append((cliente_id, f"{nombre} - {int(total_cajas)} cajas"))
+                    display_name = nombre if nombre else f"Local #{dest_id}"
+                    clientes_para_hoy.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
 
-        clientes_para_hoy.sort(key=lambda x: x[1])
-        for cliente_id, texto in clientes_para_hoy:
+        clientes_para_hoy.sort(key=lambda x: x[2]) # Ordena por el display_name
+        for cliente_id, texto, _ in clientes_para_hoy:
             self.listbox_clientes.insert(tk.END, f"{cliente_id} | {texto}")
         
         self.salida_texto.config(state="normal")
         self.salida_texto.delete("1.0", tk.END)
-        self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_para_hoy)} clientes con despacho para hoy ({hoy}).")
+        self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_para_hoy)} locales con despacho para hoy ({hoy}).")
         self.salida_texto.config(state="disabled")
 
     def agregar_cd(self):
@@ -236,11 +236,9 @@ class App:
             messagebox.showerror("Error", "La zona seleccionada no se encontró en la base de datos.", parent=self.root); return
         zona_id = zona_id_res[0][0]
 
-        # Creación de la ventana Toplevel para agregar cliente
         top = tk.Toplevel(self.root); top.title("Agregar Cliente"); top.geometry("350x450")
         
-        # Widgets de la ventana
-        fields = ["Nombre:", "Longitud (Lon):", "Latitud (Lat):", "ID Destino (Excel):", "Días Reparto (,)"]
+        fields = ["ID Local (Excel):", "Nombre (Opcional):", "Longitud (Lon):", "Latitud (Lat):", "Días Reparto (,)"]
         entries = {}
         for field in fields:
             frm = ttk.Frame(top); frm.pack(fill='x', padx=10, pady=5)
@@ -254,15 +252,12 @@ class App:
 
         def guardar():
             try:
-                nombre = entries["Nombre:"].get().strip()
+                dest_id = int(entries["ID Local (Excel):"].get().strip())
+                nombre = entries["Nombre (Opcional):"].get().strip()
                 lon = float(entries["Longitud (Lon):"].get().strip())
                 lat = float(entries["Latitud (Lat):"].get().strip())
-                dest_id = int(entries["ID Destino (Excel):"].get().strip())
-                dias = entries["Días Reparto (,) "].get().strip()
+                dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
-                
-                if not nombre:
-                    messagebox.showwarning("Dato Faltante", "El nombre es obligatorio.", parent=top); return
 
                 db_execute("INSERT INTO clientes (nombre, lon, lat, tipo_camion, zona_id, destination_id, dias_reparto) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            (nombre, lon, lat, tipo, zona_id, dest_id, dias))
@@ -270,9 +265,9 @@ class App:
                 top.destroy()
                 self.refrescar_datos_locales_y_ui()
             except ValueError:
-                messagebox.showerror("Error de Formato", "Longitud, Latitud e ID Destino deben ser números.", parent=top)
+                messagebox.showerror("Error de Formato", "ID Local, Longitud y Latitud deben ser números válidos.", parent=top)
             except sqlite3.IntegrityError:
-                messagebox.showerror("Error de Duplicado", "Ya existe un cliente con ese ID de Destino.", parent=top)
+                messagebox.showerror("Error de Duplicado", "Ya existe un cliente con ese ID de Local.", parent=top)
 
         ttk.Button(top, text="Guardar Cliente", command=guardar, style="Accent.TButton").pack(pady=20)
     
@@ -286,9 +281,9 @@ class App:
         cliente = next((c for c in self.all_clientes_data if c[0] == cliente_id), None)
         if not cliente: return
 
-        top = tk.Toplevel(self.root); top.title(f"Editar: {cliente[1]}"); top.geometry("350x450")
+        top = tk.Toplevel(self.root); top.title(f"Editar: {cliente[1] or f'Local #{cliente[7]}'}"); top.geometry("350x450")
         
-        fields = {"Nombre:": cliente[1], "Longitud (Lon):": cliente[2], "Latitud (Lat):": cliente[3], "ID Destino (Excel):": cliente[7], "Días Reparto (,)": cliente[8]}
+        fields = {"ID Local (Excel):": cliente[7], "Nombre (Opcional):": cliente[1], "Longitud (Lon):": cliente[2], "Latitud (Lat):": cliente[3], "Días Reparto (,)": cliente[8]}
         entries = {}
         for field, value in fields.items():
             frm = ttk.Frame(top); frm.pack(fill='x', padx=10, pady=5)
@@ -303,10 +298,10 @@ class App:
         def guardar_cambios():
             if not messagebox.askyesno("Confirmar", "¿Guardar los cambios?", parent=top): return
             try:
-                nombre = entries["Nombre:"].get().strip()
+                dest_id = int(entries["ID Local (Excel):"].get().strip())
+                nombre = entries["Nombre (Opcional):"].get().strip()
                 lon = float(entries["Longitud (Lon):"].get().strip())
                 lat = float(entries["Latitud (Lat):"].get().strip())
-                dest_id = int(entries["ID Destino (Excel):"].get().strip())
                 dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
                 
@@ -317,9 +312,9 @@ class App:
                 self.refrescar_datos_locales_y_ui()
 
             except ValueError:
-                messagebox.showerror("Error de Formato", "Longitud, Latitud e ID Destino deben ser números.", parent=top)
+                messagebox.showerror("Error de Formato", "ID Local, Longitud y Latitud deben ser números válidos.", parent=top)
             except sqlite3.IntegrityError:
-                 messagebox.showerror("Error de Duplicado", "Ya existe otro cliente con ese ID de Destino.", parent=top)
+                 messagebox.showerror("Error de Duplicado", "Ya existe otro cliente con ese ID de Local.", parent=top)
 
         ttk.Button(top, text="Guardar Cambios", command=guardar_cambios, style="Accent.TButton").pack(pady=20)
     
@@ -349,7 +344,7 @@ class App:
             for row in db_query("SELECT id, patente, tipo FROM camiones ORDER BY patente"):
                 tree.insert("", "end", values=row)
         
-        refrescar() # Carga inicial
+        refrescar()
 
     def mostrar_historial_rutas(self):
         """Muestra una ventana con el historial de rutas calculadas."""
@@ -367,8 +362,14 @@ class App:
         for fecha, patente, clientes_str in db_query(query):
             if clientes_str:
                 clientes_ids = [int(cid) for cid in clientes_str.split(',')]
-                nombres = [c[1] for c in self.all_clientes_data if c[0] in clientes_ids]
-                tree.insert("", "end", values=(fecha, patente, ", ".join(nombres)))
+                display_names = []
+                for cid in clientes_ids:
+                    cliente_data = next((c for c in self.all_clientes_data if c[0] == cid), None)
+                    if cliente_data:
+                        display_name = cliente_data[1] if cliente_data[1] else f"Local #{cliente_data[7]}"
+                        display_names.append(display_name)
+                
+                tree.insert("", "end", values=(fecha, patente, ", ".join(display_names)))
 
     def iniciar_calculo(self):
         """Inicia el proceso de cálculo de la ruta en un hilo separado."""
@@ -399,7 +400,6 @@ class App:
         self.salida_texto.insert(tk.END, "Procesando la ruta, por favor espera...")
         self.salida_texto.config(state="disabled")
 
-        # Ejecuta el cálculo en un hilo para no bloquear la UI.
         thread = threading.Thread(target=self.ejecutar_y_actualizar_gui, args=(camion_id, clientes_ids))
         thread.daemon = True
         thread.start()
@@ -426,3 +426,4 @@ class App:
         
         self.salida_texto.config(state="disabled")
         self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima")
+

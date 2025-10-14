@@ -15,6 +15,7 @@ import pandas as pd
 from tkinter import filedialog
 
 DB_FILE = "rutas.db"
+
 def db_query(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         return conn.cursor().execute(query, params).fetchall()
@@ -22,31 +23,6 @@ def db_execute(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         conn.cursor().execute(query, params)
         conn.commit()
-
-def procesar_despachos_del_dia():
-    filepath = filedialog.askopenfilename(
-        title="Selecciona el archivo Excel de despachos",
-        filetypes=(("Archivos Excel", "*.xlsx"), ("Todos los archivos", "*.*"))
-    )
-    if not filepath:
-        return None, "No se seleccionó ningún archivo."
-    try:
-        df = pd.read_excel(filepath, sheet_name="shipping Temuco")
-        df_listo = df[df['Status'] == 'PICKED'].copy()
-        if df_listo.empty:
-            return {}, "No se encontraron despachos con estado 'PICKED'."
-        df_listo['Destination #'] = df_listo['Destination'].str.split('|').str[-1].str.strip()
-        df_listo.dropna(subset=['Destination #'], inplace=True)
-        df_listo = df_listo[df_listo['Destination #'] != '']
-        df_listo['Destination #'] = df_listo['Destination #'].astype(int)
-        df_listo['Case Count'] = pd.to_numeric(df_listo['Case Count'], errors='coerce').fillna(0)
-        despachos = df_listo.groupby('Destination #')['Case Count'].sum()
-        despachos_dict = despachos.to_dict()
-        return despachos_dict, f"Se procesaron {len(despachos_dict)} clientes con un total de {int(sum(despachos_dict.values()))} cajas."
-    except KeyError as e:
-        return None, f"Error: No se encontró la columna requerida en el Excel: {e}. Revisa el formato."
-    except Exception as e:
-        return None, f"Error al procesar el archivo Excel: {e}"
 
 def inicializar_tabla_usuarios():
     db_execute("""
@@ -69,7 +45,7 @@ def get_api_key():
     try:
         config.read('config.ini')
         api_key = config['API']['key']
-        if not api_key or api_key == 'tu_clave_aqui':
+        if not api_key or api_key == 'clave api':
             messagebox.showerror("Error de Configuración", "No se encontró la clave de API en 'config.ini'.")
             return None
         return api_key
@@ -82,121 +58,32 @@ client = openrouteservice.Client(key=api_key) if api_key else None
 def validar_patente(patente):
     return bool(re.fullmatch(r"[A-Z]{4}\d{2}|[A-Z]{2}\d{4}", patente.upper()))
 
-class App:
-    def __init__(self, root, rol):
-        self.rol = rol
-        self.root = root
-        self.root.title("Ruteador de Camiones v0.3")
-        self.root.geometry("850x700")
-        self.style = ttk.Style()
-        self.style.configure(".", font=("Segoe UI", 10))
-        self.all_clientes_data = []
-        self.setup_ui()
-        self.refrescar_datos_locales_y_ui()
+def procesar_despachos_del_dia():
+    filepath = filedialog.askopenfilename(
+        title="Selecciona el archivo Excel de despachos",
+        filetypes=(("Archivos Excel", "*.xlsx"), ("Todos los archivos", "*.*"))
+    )
+    if not filepath:
+        return None, "No se seleccionó ningún archivo."
+    try:
+        df = pd.read_excel(filepath, sheet_name="Shipping Temuco")
+        df_listo = df[df['Status'] == 'PICKED'].copy()
+        if df_listo.empty:
+            return {}, "No se encontraron despachos con estado 'PICKED'."
+        df_listo['Destination #'] = df_listo['Destination'].str.split('|').str[-1].str.strip()
+        df_listo.dropna(subset=['Destination #'], inplace=True)
+        df_listo = df_listo[df_listo['Destination #'] != '']
+        df_listo['Destination #'] = df_listo['Destination #'].astype(int)
+        df_listo['Case Count'] = pd.to_numeric(df_listo['Case Count'], errors='coerce').fillna(0)
+        despachos = df_listo.groupby('Destination #')['Case Count'].sum()
+        despachos_dict = despachos.to_dict()
+        return despachos_dict, f"Se procesaron {len(despachos_dict)} clientes con un total de {int(sum(despachos_dict.values()))} cajas."
+    except KeyError as e:
+        return None, f"Error: No se encontró la columna requerida en el Excel: {e}. Revisa el formato."
+    except Exception as e:
+        return None, f"Error al procesar el archivo Excel: {e}"
 
-    def setup_ui(self):
-
-        if self.rol != "admin":
-            for widget in [self.btn_calcular]:
-                widget.config(state="normal")
-            for child in self.root.winfo_children():
-                pass
-
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky="nsew")
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(0, weight=1)
-
-        main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(1, weight=0) 
-        main_frame.grid_rowconfigure(1, weight=1)
-
-        top_frame = ttk.Frame(main_frame)
-        top_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-        top_frame.grid_columnconfigure(1, weight=1)
-
-        self.btn_cargar_excel = ttk.Button(top_frame, text="1. Cargar Despachos del Día (Excel)", command=self.cargar_y_filtrar_despachos, style="Accent.TButton")
-        self.btn_cargar_excel.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-
-        camion_frame = ttk.LabelFrame(top_frame, text="2. Datos del Camión", padding="10")
-        camion_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Label(camion_frame, text="Patente:").pack(side=tk.LEFT, padx=5)
-        self.entry_patente = ttk.Entry(camion_frame, width=15)
-        self.entry_patente.pack(side=tk.LEFT, padx=5)
-        ttk.Label(camion_frame, text="Tipo:").pack(side=tk.LEFT, padx=5)
-        self.combo_tipo = ttk.Combobox(camion_frame, values=["Largo", "Corto", "Dolly"], state="readonly", width=10)
-        self.combo_tipo.current(0)
-        self.combo_tipo.pack(side=tk.LEFT, padx=5)
-
-        gestion_frame = ttk.Frame(main_frame)
-        gestion_frame.grid(row=0, column=1, rowspan=3, sticky="ns", padx=5, pady=5)
-
-        clientes_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión de Clientes", padding="10")
-        clientes_gestion_frame.pack(fill="x", pady=5)
-        ttk.Button(clientes_gestion_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(fill='x', pady=2)
-        ttk.Button(clientes_gestion_frame, text="Editar Cliente", command=self.editar_cliente).pack(fill='x')
-        ttk.Button(clientes_gestion_frame, text="Eliminar Cliente", command=self.eliminar_cliente).pack(fill='x', pady=2)
-
-        otros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión General", padding="10")
-        otros_gestion_frame.pack(fill="x", pady=5)
-        ttk.Button(otros_gestion_frame, text="Ver/Editar Camiones", command=self.mostrar_camiones).pack(fill="x", pady=2)
-        ttk.Button(otros_gestion_frame, text="Historial de Rutas", command=self.mostrar_historial_rutas).pack(fill="x")
-
-        filtros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Filtro y Gestión de Zonas", padding="10")
-        filtros_gestion_frame.pack(fill="x", pady=5)
-
-        ttk.Label(filtros_gestion_frame, text="Centro Dist.:").pack(fill='x', pady=2)
-        self.combo_cd = ttk.Combobox(filtros_gestion_frame, state="readonly")
-        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
-        self.combo_cd.pack(fill='x', padx=5)
-
-        ttk.Label(filtros_gestion_frame, text="Zona Geográfica:").pack(fill='x', pady=2)
-        self.combo_zona = ttk.Combobox(filtros_gestion_frame, state="readonly")
-        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
-        self.combo_zona.pack(fill='x', padx=5)
-
-        ttk.Separator(filtros_gestion_frame, orient='horizontal').pack(fill='x', pady=5)
-
-        ttk.Label(filtros_gestion_frame, text="Gestión de Estructura:").pack(fill='x', pady=2)
-
-        ttk.Button(filtros_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
-
-        ttk.Button(filtros_gestion_frame, text="Agregar Nueva Zona al CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
-        ttk.Button(filtros_gestion_frame, text="Editar Zona Geográfica", command=self.editar_zona).pack(fill='x', pady=2)
-        ttk.Button(filtros_gestion_frame, text="Eliminar Zona y Clientes", command=self.eliminar_zona).pack(fill='x', pady=2)
-
-        rutas_rec_frame = ttk.LabelFrame(gestion_frame, text="Rutas Recurrentes", padding="10")
-        rutas_rec_frame.pack(fill="x", pady=5)
-        ttk.Button(rutas_rec_frame, text="Guardar Ruta Actual", command=self.guardar_ruta_recurrente).pack(fill='x', pady=2)
-        ttk.Button(rutas_rec_frame, text="Cargar Ruta Guardada", command=self.cargar_ruta_recurrente).pack(fill='x')
-
-        clientes_frame = ttk.LabelFrame(main_frame, text="3. Clientes con Despacho para Hoy", padding="10")
-        clientes_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        clientes_frame.grid_rowconfigure(0, weight=1)
-        clientes_frame.grid_columnconfigure(0, weight=1)
-
-        listbox_frame = ttk.Frame(clientes_frame)
-        listbox_frame.grid(row=0, column=0, sticky="nsew")
-        listbox_frame.grid_rowconfigure(0, weight=1)
-        listbox_frame.grid_columnconfigure(0, weight=1)
-        scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
-        self.listbox_clientes = tk.Listbox(listbox_frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set, background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
-        scrollbar.config(command=self.listbox_clientes.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox_clientes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        salida_frame = ttk.LabelFrame(main_frame, text="4. Resultados de la Ruta", padding="10")
-        salida_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
-        salida_frame.grid_rowconfigure(0, weight=1)
-        salida_frame.grid_columnconfigure(0, weight=1)
-        self.salida_texto = tk.Text(salida_frame, height=10, width=60, state="disabled", wrap="word", background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
-        self.salida_texto.grid(row=0, column=0, sticky="nsew")
-
-        self.style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"))
-        self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
-        self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
-
-    def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes):
+def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes):
         if not client:
             return {'error': "Cliente API no inicializado. Revisa tu clave de API."}
         if not camion_id or not clientes_seleccionados_ids:
@@ -207,7 +94,7 @@ class App:
                 if c[0] in clientes_seleccionados_ids:
                     locs.append([c[2], c[3]])
                     nombres.append(c[1])
-            locs.insert(0, [-72.093775, -36.562653]) # Bodega
+            locs.insert(0, [-72.093775, -36.562653]) # Bodega, ver como cambiar según CD donde se implemente
             nombres.insert(0, "Bodega (Inicio)")
             matrix = client.distance_matrix(locations=locs, profile="driving-hgv", metrics=["duration"])
             durations = matrix['durations']
@@ -251,6 +138,100 @@ class App:
             return {'error': f"Error de API: {e.args[0]}"}
         except Exception as e:
             return {'error': f"Ocurrió un error inesperado: {e}"}
+
+class App:
+    def __init__(self, root, rol):
+        self.rol = rol
+        self.root = root
+        self.root.title("Ruteador de Camiones v0.3")
+        self.root.geometry("850x700")
+        self.style = ttk.Style()
+        self.style.configure(".", font=("Segoe UI", 10))
+        self.all_clientes_data = []
+        self.setup_ui()
+        self.refrescar_datos_locales_y_ui()
+
+    def setup_ui(self):
+
+        if self.rol != "admin":
+            for widget in [self.btn_calcular]:
+                widget.config(state="normal")
+            for child in self.root.winfo_children():
+                pass
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=0) 
+        main_frame.grid_rowconfigure(1, weight=1)
+        top_frame = ttk.Frame(main_frame)
+        top_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        top_frame.grid_columnconfigure(1, weight=1)
+        self.btn_cargar_excel = ttk.Button(top_frame, text="1. Cargar Despachos del Día (Excel)", command=self.cargar_y_filtrar_despachos, style="Accent.TButton")
+        self.btn_cargar_excel.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        camion_frame = ttk.LabelFrame(top_frame, text="2. Datos del Camión", padding="10")
+        camion_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(camion_frame, text="Patente:").pack(side=tk.LEFT, padx=5)
+        self.entry_patente = ttk.Entry(camion_frame, width=15)
+        self.entry_patente.pack(side=tk.LEFT, padx=5)
+        ttk.Label(camion_frame, text="Tipo:").pack(side=tk.LEFT, padx=5)
+        self.combo_tipo = ttk.Combobox(camion_frame, values=["Largo", "Corto", "Dolly"], state="readonly", width=10)
+        self.combo_tipo.current(0)
+        self.combo_tipo.pack(side=tk.LEFT, padx=5)
+        gestion_frame = ttk.Frame(main_frame)
+        gestion_frame.grid(row=0, column=1, rowspan=3, sticky="ns", padx=5, pady=5)
+        clientes_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión de Clientes", padding="10")
+        clientes_gestion_frame.pack(fill="x", pady=5)
+        ttk.Button(clientes_gestion_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(fill='x', pady=2)
+        ttk.Button(clientes_gestion_frame, text="Editar Cliente", command=self.editar_cliente).pack(fill='x')
+        ttk.Button(clientes_gestion_frame, text="Eliminar Cliente", command=self.eliminar_cliente).pack(fill='x', pady=2)
+        otros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión General", padding="10")
+        otros_gestion_frame.pack(fill="x", pady=5)
+        ttk.Button(otros_gestion_frame, text="Ver/Editar Camiones", command=self.mostrar_camiones).pack(fill="x", pady=2)
+        ttk.Button(otros_gestion_frame, text="Historial de Rutas", command=self.mostrar_historial_rutas).pack(fill="x")
+        filtros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Filtro y Gestión de Zonas", padding="10")
+        filtros_gestion_frame.pack(fill="x", pady=5)
+        ttk.Label(filtros_gestion_frame, text="Centro Dist.:").pack(fill='x', pady=2)
+        self.combo_cd = ttk.Combobox(filtros_gestion_frame, state="readonly")
+        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
+        self.combo_cd.pack(fill='x', padx=5)
+        ttk.Label(filtros_gestion_frame, text="Zona Geográfica:").pack(fill='x', pady=2)
+        self.combo_zona = ttk.Combobox(filtros_gestion_frame, state="readonly")
+        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
+        self.combo_zona.pack(fill='x', padx=5)
+        ttk.Separator(filtros_gestion_frame, orient='horizontal').pack(fill='x', pady=5)
+        ttk.Label(filtros_gestion_frame, text="Gestión de Estructura:").pack(fill='x', pady=2)
+        ttk.Button(filtros_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
+        ttk.Button(filtros_gestion_frame, text="Agregar Nueva Zona al CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
+        ttk.Button(filtros_gestion_frame, text="Editar Zona Geográfica", command=self.editar_zona).pack(fill='x', pady=2)
+        ttk.Button(filtros_gestion_frame, text="Eliminar Zona y Clientes", command=self.eliminar_zona).pack(fill='x', pady=2)
+        rutas_rec_frame = ttk.LabelFrame(gestion_frame, text="Rutas Recurrentes", padding="10")
+        rutas_rec_frame.pack(fill="x", pady=5)
+        ttk.Button(rutas_rec_frame, text="Guardar Ruta Actual", command=self.guardar_ruta_recurrente).pack(fill='x', pady=2)
+        ttk.Button(rutas_rec_frame, text="Cargar Ruta Guardada", command=self.cargar_ruta_recurrente).pack(fill='x')
+        clientes_frame = ttk.LabelFrame(main_frame, text="3. Clientes con Despacho para Hoy", padding="10")
+        clientes_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        clientes_frame.grid_rowconfigure(0, weight=1)
+        clientes_frame.grid_columnconfigure(0, weight=1)
+        listbox_frame = ttk.Frame(clientes_frame)
+        listbox_frame.grid(row=0, column=0, sticky="nsew")
+        listbox_frame.grid_rowconfigure(0, weight=1)
+        listbox_frame.grid_columnconfigure(0, weight=1)
+        scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
+        self.listbox_clientes = tk.Listbox(listbox_frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set, background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
+        scrollbar.config(command=self.listbox_clientes.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox_clientes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        salida_frame = ttk.LabelFrame(main_frame, text="4. Resultados de la Ruta", padding="10")
+        salida_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        salida_frame.grid_rowconfigure(0, weight=1)
+        salida_frame.grid_columnconfigure(0, weight=1)
+        self.salida_texto = tk.Text(salida_frame, height=10, width=60, state="disabled", wrap="word", background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
+        self.salida_texto.grid(row=0, column=0, sticky="nsew")
+        self.style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"))
+        self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
+        self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
 
     def cargar_y_filtrar_despachos(self):
         self.despachos_pendientes, mensaje = procesar_despachos_del_dia()
@@ -367,7 +348,7 @@ class App:
                 folium.Marker([coord[1], coord[0]], popup=f"{i}. {nombre}",
                               icon=folium.Icon(color="green" if i == 0 else "purple")).add_to(m)
 
-            map_file = "ruta_historica.html"
+            map_file = f"ruta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             m.save(map_file)
             def finalizar():
                 webbrowser.open(map_file)
