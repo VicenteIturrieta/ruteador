@@ -6,7 +6,6 @@ import webbrowser
 from datetime import datetime
 import sqlite3
 
-# Importaciones de los otros módulos del proyecto
 from db import db_query, db_execute
 from excel_parser import procesar_despachos_del_dia
 from route_creator import proceso_de_calculo, client
@@ -40,7 +39,6 @@ class App:
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(1, weight=1)
 
-        # --- Frames Superiores (Carga y Camión) ---
         top_frame = ttk.Frame(main_frame)
         top_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         top_frame.grid_columnconfigure(1, weight=1)
@@ -58,7 +56,6 @@ class App:
         self.combo_tipo.current(0)
         self.combo_tipo.pack(side=tk.LEFT, padx=5)
         
-        # --- Frame de Gestión (Derecha) ---
         gestion_frame = ttk.Frame(main_frame)
         gestion_frame.grid(row=0, column=1, rowspan=3, sticky="ns", padx=5, pady=5)
         
@@ -73,7 +70,6 @@ class App:
         ttk.Button(otros_gestion_frame, text="Ver/Editar Camiones", command=self.mostrar_camiones).pack(fill="x", pady=2)
         ttk.Button(otros_gestion_frame, text="Historial de Rutas", command=self.mostrar_historial_rutas).pack(fill="x")
 
-        # --- Frame de Filtros y Zonas (Derecha) ---
         filtros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Filtro y Gestión de Zonas", padding="10")
         filtros_gestion_frame.pack(fill="x", pady=5)
         ttk.Label(filtros_gestion_frame, text="Centro Dist.:").pack(fill='x', pady=2)
@@ -88,7 +84,6 @@ class App:
         ttk.Button(filtros_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
         ttk.Button(filtros_gestion_frame, text="Agregar Nueva Zona al CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
         
-        # --- Frame Principal de Clientes (Izquierda) ---
         clientes_frame = ttk.LabelFrame(main_frame, text="3. Clientes", padding="10")
         clientes_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         clientes_frame.grid_rowconfigure(0, weight=1)
@@ -100,7 +95,6 @@ class App:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox_clientes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # --- Frame de Salida/Resultados (Izquierda) ---
         salida_frame = ttk.LabelFrame(main_frame, text="4. Resultados de la Ruta", padding="10")
         salida_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         salida_frame.grid_rowconfigure(0, weight=1)
@@ -108,7 +102,6 @@ class App:
         self.salida_texto = tk.Text(salida_frame, height=10, state="disabled", wrap="word", background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
         self.salida_texto.grid(row=0, column=0, sticky="nsew")
 
-        # --- Botón Principal ---
         self.style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"))
         self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
         self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
@@ -154,12 +147,10 @@ class App:
         zona = self.combo_zona.get()
         self.listbox_clientes.delete(0, tk.END)
         
-        # Filtra los datos ya cargados en memoria
         clientes_filtrados = [c for c in self.all_clientes_data if c[5] == cd and c[6] == zona]
-        clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}") # Ordena por nombre o por ID de local
+        clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}")
 
         for cliente in clientes_filtrados:
-            # cliente[1] es nombre, cliente[7] es destination_id
             display_name = cliente[1] if cliente[1] else f"Local #{cliente[7]}"
             self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
 

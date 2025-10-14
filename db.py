@@ -23,10 +23,8 @@ def inicializar_tabla_usuarios():
             rol TEXT CHECK(rol IN ('admin','usuario')) NOT NULL
         )
     """)
-    # Verifica si el usuario admin ya existe.
     admin_existe = db_query("SELECT * FROM usuarios WHERE usuario = 'admin'")
     if not admin_existe:
-        # Si no existe, lo crea.
         db_execute("INSERT INTO usuarios (usuario, password, rol) VALUES (?, ?, ?)",
                    ('admin', 'admin', 'admin'))
 
@@ -88,7 +86,6 @@ def setup_database():
     )
     """)
 
-    # Inicializa la tabla de usuarios (admin/admin)
     inicializar_tabla_usuarios()
 
     conn.commit()

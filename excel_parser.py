@@ -15,12 +15,9 @@ def procesar_despachos_del_dia():
         return None, "No se seleccionó ningún archivo."
 
     try:
-        # Lee el archivo Excel.
         xls = pd.ExcelFile(filepath)
         df_pendiente = None
         df_shipping = None
-        
-        # Carga las pestañas si existen.
         if 'Pendiente' in xls.sheet_names:
             df_pendiente = pd.read_excel(xls, sheet_name='Pendiente')
         
@@ -32,7 +29,6 @@ def procesar_despachos_del_dia():
 
         all_dataframes = []
 
-        # Procesa la pestaña 'Pendiente'.
         if df_pendiente is not None:
             required_cols = ["Destination #", "Order Quantity (WHPK)"]
             if all(col in df_pendiente.columns for col in required_cols):
@@ -42,7 +38,6 @@ def procesar_despachos_del_dia():
             else:
                 messagebox.showwarning("Advertencia", "No se encontraron las columnas 'Destination #' y/o 'Order Quantity (whpk)' en la pestaña 'Pendiente'.")
 
-        # Procesa la pestaña 'Shipping'.
         if df_shipping is not None:
             required_cols = ["Local", "Case Count"]
             if all(col in df_shipping.columns for col in required_cols):
@@ -55,10 +50,8 @@ def procesar_despachos_del_dia():
         if not all_dataframes:
             return {}, "No se pudo leer información de ninguna pestaña. Revisa las columnas del archivo."
 
-        # Combina los datos de ambas pestañas.
         df_total = pd.concat(all_dataframes, ignore_index=True)
 
-        # Limpia y procesa los datos combinados.
         df_total.dropna(subset=['local_id'], inplace=True)
         df_total['local_id'] = pd.to_numeric(df_total['local_id'], errors='coerce')
         df_total.dropna(subset=['local_id'], inplace=True)
@@ -66,7 +59,6 @@ def procesar_despachos_del_dia():
         
         df_total['cajas'] = pd.to_numeric(df_total['cajas'], errors='coerce').fillna(0)
 
-        # Agrupa por local y suma las cajas.
         despachos = df_total.groupby('local_id')['cajas'].sum()
         despachos_dict = despachos.to_dict()
 

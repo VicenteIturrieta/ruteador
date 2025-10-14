@@ -21,7 +21,6 @@ def get_api_key():
         messagebox.showerror("Error de Configuración", "No se pudo encontrar o leer el archivo 'config.ini'.")
         return None
 
-# Inicializa el cliente de OpenRouteService.
 api_key = get_api_key()
 client = openrouteservice.Client(key=api_key) if api_key else None
 
@@ -35,22 +34,18 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
     if not camion_id or not clientes_seleccionados_ids:
         return {'error': "Selecciona un camión y al menos un cliente."}
     try:
-        # Prepara las localizaciones y nombres para la API.
         locs, nombres = [], []
         for c in todos_los_clientes:
             if c[0] in clientes_seleccionados_ids:
                 locs.append([c[2], c[3]])
                 nombres.append(c[1])
         
-        # Coordenadas de la bodega (punto de inicio).
         locs.insert(0, [-72.093775, -36.562653]) 
         nombres.insert(0, "Bodega (Inicio)")
         
-        # Llama a la API para obtener la matriz de distancias.
         matrix = client.distance_matrix(locations=locs, profile="driving-hgv", metrics=["duration"])
         durations = matrix['durations']
 
-        # Configura el modelo de routing de OR-Tools.
         manager = pywrapcp.RoutingIndexManager(len(durations), 1, 0)
         routing = pywrapcp.RoutingModel(manager)
 
@@ -60,7 +55,6 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
         transit_callback_index = routing.RegisterTransitCallback(time_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
         
-        # Resuelve el problema de routing.
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
         solution = routing.SolveWithParameters(search_parameters)
@@ -68,7 +62,6 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
         if not solution:
             return {'error': "No se encontró una solución para la ruta."}
 
-        # Construye la ruta y el texto de salida.
         ruta_indices, ruta_texto = [], "Ruta óptima:\n"
         index = routing.Start(0)
         while not routing.IsEnd(index):
@@ -77,7 +70,6 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
             ruta_texto += f"{len(ruta_indices)-1}. {nombres[node_index]}\n"
             index = solution.Value(routing.NextVar(index))
         
-        # Guarda la ruta en la base de datos.
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         clientes_str = ",".join(map(str, clientes_seleccionados_ids))
         db_execute("INSERT INTO rutas (camion_id, fecha, clientes) VALUES (?, ?, ?)", (camion_id, fecha, clientes_str))
@@ -85,10 +77,8 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
         tiempo_total_segundos = solution.ObjectiveValue()
         ruta_texto += f"\nTiempo total: {tiempo_total_segundos / 60:.2f} minutos\n"
         
-        # Genera el mapa con Folium.
         ruta_coordenadas = [locs[idx] for idx in ruta_indices]
         if ruta_coordenadas:
-            # La API necesita el último punto duplicado para cerrar el bucle visual.
             ruta_coordenadas.append(ruta_coordenadas[0])
         
         route_geojson = client.directions(coordinates=ruta_coordenadas, profile='driving-hgv', format='geojson')

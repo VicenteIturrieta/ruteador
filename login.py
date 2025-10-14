@@ -9,9 +9,8 @@ class Login:
         self.root.geometry("300x200")
         self.root.resizable(False, False)
         
-        self.rol_usuario = None # Almacenará 'admin' o 'usuario' si el login es exitoso.
+        self.rol_usuario = None 
 
-        # Centrar la ventana
         self.root.update_idletasks()
         width = self.root.winfo_width()
         height = self.root.winfo_height()
@@ -25,13 +24,12 @@ class Login:
         ttk.Label(main_frame, text="Usuario:").pack()
         self.entry_user = ttk.Entry(main_frame)
         self.entry_user.pack(fill="x", pady=5)
-        self.entry_user.focus() # Pone el foco en el campo de usuario
+        self.entry_user.focus()
 
         ttk.Label(main_frame, text="Contraseña:").pack()
         self.entry_pass = ttk.Entry(main_frame, show="*")
         self.entry_pass.pack(fill="x", pady=5)
 
-        # Permite presionar Enter para ingresar
         self.root.bind('<Return>', self.verificar_login)
 
         ttk.Button(main_frame, text="Ingresar", command=self.verificar_login, style="Accent.TButton").pack(pady=10)
@@ -49,7 +47,7 @@ class Login:
         
         if resultado:
             self.rol_usuario = resultado[0][0]
-            self.root.destroy() # Cierra la ventana de login si es exitoso
+            self.root.destroy()
         else:
             messagebox.showerror("Error", "Usuario o contraseña incorrectos.")
-            self.entry_pass.delete(0, 'end') # Limpia el campo de contraseña
+            self.entry_pass.delete(0, 'end') 

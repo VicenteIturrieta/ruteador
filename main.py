@@ -9,23 +9,17 @@ def main():
     """
     Función principal para configurar la base de datos y lanzar la aplicación.
     """
-    # Se asegura que la base de datos y sus tablas existan.
     setup_database()
 
-    # Verifica si la clave de API está configurada antes de iniciar.
     api_key = get_api_key()
     if not api_key:
         print("Error: No se puede iniciar la aplicación sin una clave de API válida en config.ini.")
-        # Opcionalmente, mostrar un messagebox aquí si se quiere una GUI para el error.
         return
 
-    # Inicia la ventana de login.
     login_root = tk.Tk()
     sv_ttk.set_theme("light")
     login_app = Login(login_root)
     login_root.mainloop()
-
-    # Si el login es exitoso, inicia la aplicación principal.
     if login_app.rol_usuario:
         main_root = tk.Tk()
         sv_ttk.set_theme("light")
