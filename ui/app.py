@@ -3,16 +3,19 @@ from tkinter import messagebox, ttk, simpledialog
 import threading
 import re
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 import sqlite3
 
-from db import db_query, db_execute
-from excel_parser import procesar_despachos_del_dia
+from db import  (
+    get_all_clientes_with_details, get_distinct_cds, get_zonas_by_cd,
+    add_zona, get_zona_id, add_cliente, update_cliente, delete_cliente,
+    get_all_camiones, get_historial_rutas, get_camion_id_by_patente, add_camion
+)
+from excel_parser import procesar_despachos_del_dia, procesar_fix_planning
 from route_creator import proceso_de_calculo, client
 
 
 def validar_patente(patente):
-    """Valida el formato de una patente chilena."""
     return bool(re.fullmatch(r"[A-Z]{4}\d{2}|[A-Z]{2}\d{4}", patente.upper()))
 
 class App:
@@ -31,20 +34,43 @@ class App:
         self.refrescar_datos_locales_y_ui()
 
     def setup_ui(self):
-        """Configura la interfaz gráfica principal."""
+        self.style = ttk.Style()
+        COLOR_ROJO = "#D40511"
+        COLOR_AMARILLO = "#FFCC00"
+        COLOR_TEXTO_BLANCO = "#FFFFFF"
+
+        # Estilo para los botones principales de acción
+        self.style.configure("Accent.TButton",
+                            background=COLOR_ROJO,
+                            foreground=COLOR_TEXTO_BLANCO,
+                            font=("Segoe UI", 12, "bold"),
+                            padding=(10, 5))
+        self.style.map("Accent.TButton",
+                    background=[('active', '#A8040E'), ('pressed', '#A8040E')],
+                    foreground=[('active', COLOR_TEXTO_BLANCO)])
+        self.style.configure("TLabelFrame.Label",
+                            foreground=COLOR_ROJO,
+                            font=("Segoe UI", 11, "bold"))
+        self.style.configure("TNotebook.Tab",
+                            font=("Segoe UI", 10, "bold"),
+                            padding=(10, 5))
+        self.style.map("TNotebook.Tab",
+                    background=[("selected", COLOR_ROJO)],
+                    foreground=[("selected", COLOR_TEXTO_BLANCO)])
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1, minsize=400)
+        main_frame.grid_columnconfigure(1, weight=0)
         main_frame.grid_rowconfigure(1, weight=1)
 
         top_frame = ttk.Frame(main_frame)
-        top_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         top_frame.grid_columnconfigure(1, weight=1)
 
-        self.btn_cargar_excel = ttk.Button(top_frame, text="1. Cargar Despachos del Día (Excel)", command=self.cargar_y_filtrar_despachos, style="Accent.TButton")
-        self.btn_cargar_excel.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        self.btn_cargar_excel = ttk.Button(top_frame, text="1. Cargar Despachos (Excel)", command=self.cargar_y_filtrar_despachos, style="Accent.TButton")
+        self.btn_cargar_excel.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="ew")
 
         camion_frame = ttk.LabelFrame(top_frame, text="2. Datos del Camión", padding="10")
         camion_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
@@ -55,42 +81,52 @@ class App:
         self.combo_tipo = ttk.Combobox(camion_frame, values=["Largo", "Corto", "Dolly"], state="readonly", width=10)
         self.combo_tipo.current(0)
         self.combo_tipo.pack(side=tk.LEFT, padx=5)
-        
-        gestion_frame = ttk.Frame(main_frame)
-        gestion_frame.grid(row=0, column=1, rowspan=3, sticky="ns", padx=5, pady=5)
-        
-        clientes_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión de Clientes", padding="10")
+
+        panel_derecho = ttk.Notebook(main_frame)
+        panel_derecho.grid(row=0, column=1, rowspan=3, sticky="ns", padx=5, pady=5)
+
+        tab_filtros = ttk.Frame(panel_derecho, padding="10")
+        tab_gestion = ttk.Frame(panel_derecho, padding="10")
+        tab_herramientas = ttk.Frame(panel_derecho, padding="10")
+
+        panel_derecho.add(tab_filtros, text="Filtros")
+        panel_derecho.add(tab_gestion, text="Gestión")
+        panel_derecho.add(tab_herramientas, text="Herramientas")
+
+        ttk.Label(tab_filtros, text="Centro Dist.:").pack(fill='x', pady=2)
+        self.combo_cd = ttk.Combobox(tab_filtros, state="readonly")
+        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
+        self.combo_cd.pack(fill='x', padx=5, pady=(0, 10))
+        ttk.Label(tab_filtros, text="Zona Geográfica:").pack(fill='x', pady=2)
+        self.combo_zona = ttk.Combobox(tab_filtros, state="readonly")
+        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
+        self.combo_zona.pack(fill='x', padx=5)
+
+        clientes_gestion_frame = ttk.LabelFrame(tab_gestion, text="Clientes", padding="10")
         clientes_gestion_frame.pack(fill="x", pady=5)
         ttk.Button(clientes_gestion_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(fill='x', pady=2)
         ttk.Button(clientes_gestion_frame, text="Editar Cliente", command=self.editar_cliente).pack(fill='x')
         ttk.Button(clientes_gestion_frame, text="Eliminar Cliente", command=self.eliminar_cliente).pack(fill='x', pady=2)
 
-        otros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Gestión General", padding="10")
-        otros_gestion_frame.pack(fill="x", pady=5)
-        ttk.Button(otros_gestion_frame, text="Ver/Editar Camiones", command=self.mostrar_camiones).pack(fill="x", pady=2)
-        ttk.Button(otros_gestion_frame, text="Historial de Rutas", command=self.mostrar_historial_rutas).pack(fill="x")
+        zonas_cd_gestion_frame = ttk.LabelFrame(tab_gestion, text="Zonas y CDs", padding="10")
+        zonas_cd_gestion_frame.pack(fill="x", pady=5)
+        ttk.Button(zonas_cd_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
+        ttk.Button(zonas_cd_gestion_frame, text="Agregar Zona a CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
 
-        filtros_gestion_frame = ttk.LabelFrame(gestion_frame, text="Filtro y Gestión de Zonas", padding="10")
-        filtros_gestion_frame.pack(fill="x", pady=5)
-        ttk.Label(filtros_gestion_frame, text="Centro Dist.:").pack(fill='x', pady=2)
-        self.combo_cd = ttk.Combobox(filtros_gestion_frame, state="readonly")
-        self.combo_cd.bind("<<ComboboxSelected>>", self.cargar_zonas_por_cd)
-        self.combo_cd.pack(fill='x', padx=5)
-        ttk.Label(filtros_gestion_frame, text="Zona Geográfica:").pack(fill='x', pady=2)
-        self.combo_zona = ttk.Combobox(filtros_gestion_frame, state="readonly")
-        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
-        self.combo_zona.pack(fill='x', padx=5)
-        ttk.Separator(filtros_gestion_frame, orient='horizontal').pack(fill='x', pady=5)
-        ttk.Button(filtros_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
-        ttk.Button(filtros_gestion_frame, text="Agregar Nueva Zona al CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
-        
-        clientes_frame = ttk.LabelFrame(main_frame, text="3. Clientes", padding="10")
+        camiones_gestion_frame = ttk.LabelFrame(tab_gestion, text="Camiones", padding="10")
+        camiones_gestion_frame.pack(fill="x", pady=5)
+        ttk.Button(camiones_gestion_frame, text="Ver/Editar Camiones", command=self.mostrar_camiones).pack(fill="x", pady=2)
+
+        ttk.Button(tab_herramientas, text="Historial de Rutas", command=self.mostrar_historial_rutas).pack(fill="x", pady=5)
+        ttk.Button(tab_herramientas, text="Actualizar Días (FixPlanning)", command=self.actualizar_dias_reparto).pack(fill="x", pady=5)
+
+        clientes_frame = ttk.LabelFrame(main_frame, text="3. Clientes a Rutear", padding="10")
         clientes_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         clientes_frame.grid_rowconfigure(0, weight=1)
         clientes_frame.grid_columnconfigure(0, weight=1)
         
         scrollbar = ttk.Scrollbar(clientes_frame, orient=tk.VERTICAL)
-        self.listbox_clientes = tk.Listbox(clientes_frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set, background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
+        self.listbox_clientes = tk.Listbox(clientes_frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set, borderwidth=0, highlightthickness=0, font=("Segoe UI", 11))
         scrollbar.config(command=self.listbox_clientes.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox_clientes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -99,28 +135,25 @@ class App:
         salida_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         salida_frame.grid_rowconfigure(0, weight=1)
         salida_frame.grid_columnconfigure(0, weight=1)
-        self.salida_texto = tk.Text(salida_frame, height=10, state="disabled", wrap="word", background="#fdfdfd", foreground="#1e1e1e", borderwidth=0, highlightthickness=0)
+        self.salida_texto = tk.Text(salida_frame, height=8, state="disabled", wrap="word", borderwidth=0, highlightthickness=0, font=("Consolas", 10))
         self.salida_texto.grid(row=0, column=0, sticky="nsew")
 
-        self.style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"))
         self.btn_calcular = ttk.Button(main_frame, text="Calcular Ruta Óptima", command=self.iniciar_calculo, style="Accent.TButton")
-        self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10)
-    
+        self.btn_calcular.grid(row=3, column=0, columnspan=2, pady=10, sticky="ew")  
+
+    def actualizar_dias_reparto(self):
+        if messagebox.askyesno("Confirmar Actualización",
+                            "Esto sobrescribirá los días de reparto de los clientes según el archivo FixPlanning.\n¿Deseas continuar?"):
+            mensaje = procesar_fix_planning()
+            messagebox.showinfo("Resultado del Proceso", mensaje)
+            self.refrescar_datos_locales_y_ui()
+
     def refrescar_datos_locales_y_ui(self):
-        """Carga todos los datos de clientes y actualiza los combos de la UI."""
-        self.all_clientes_data = db_query("""
-            SELECT 
-                c.id, c.nombre, c.lon, c.lat, c.tipo_camion, z.cd, z.nombre, c.destination_id, c.dias_reparto
-            FROM 
-                clientes c 
-            LEFT JOIN 
-                zonas z ON c.zona_id = z.id
-        """)
+        self.all_clientes_data = get_all_clientes_with_details()
         self.cargar_cds()
 
     def cargar_cds(self):
-        """Puebla el combobox de Centros de Distribución."""
-        cds_query = db_query("SELECT DISTINCT cd FROM zonas ORDER BY cd")
+        cds_query = get_distinct_cds()
         cds = [row[0] for row in cds_query]
         self.combo_cd['values'] = cds
         if cds:
@@ -130,9 +163,8 @@ class App:
         self.cargar_zonas_por_cd()
 
     def cargar_zonas_por_cd(self, event=None):
-        """Puebla el combobox de Zonas basado en el CD seleccionado."""
         cd_seleccionado = self.combo_cd.get()
-        zonas_query = db_query("SELECT nombre FROM zonas WHERE cd = ? ORDER BY nombre", (cd_seleccionado,))
+        zonas_query = get_zonas_by_cd(cd_seleccionado)
         zonas = [row[0] for row in zonas_query]
         self.combo_zona['values'] = zonas
         if zonas:
@@ -142,7 +174,6 @@ class App:
         self.cargar_clientes_por_zona()
 
     def cargar_clientes_por_zona(self, event=None):
-        """Muestra los clientes en la Listbox según el CD y Zona seleccionados."""
         cd = self.combo_cd.get()
         zona = self.combo_zona.get()
         self.listbox_clientes.delete(0, tk.END)
@@ -155,7 +186,6 @@ class App:
             self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
 
     def cargar_y_filtrar_despachos(self):
-        """Maneja la carga del Excel y filtra la lista de clientes."""
         self.despachos_pendientes, mensaje = procesar_despachos_del_dia()
         
         if self.despachos_pendientes is None:
@@ -165,43 +195,42 @@ class App:
         messagebox.showinfo("Proceso finalizado", mensaje)
 
         dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-        hoy = dias_semana[datetime.now().weekday()]
+        fecha_manana = datetime.now() + timedelta(days=1)
+        dia_manana = dias_semana[fecha_manana.weekday()]
         
         self.listbox_clientes.delete(0, tk.END)
         
-        clientes_para_hoy = []
+        clientes_para_manana = []
         for cliente in self.all_clientes_data:
             cliente_id, nombre, _, _, _, _, _, dest_id, dias_reparto = cliente
             if dest_id in self.despachos_pendientes:
-                if not dias_reparto or hoy in dias_reparto:
+                if not dias_reparto or dia_manana in dias_reparto:
                     total_cajas = self.despachos_pendientes[dest_id]
                     display_name = nombre if nombre else f"Local #{dest_id}"
-                    clientes_para_hoy.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
+                    clientes_para_manana.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
 
-        clientes_para_hoy.sort(key=lambda x: x[2]) # Ordena por el display_name
-        for cliente_id, texto, _ in clientes_para_hoy:
+        clientes_para_manana.sort(key=lambda x: x[2])
+        for cliente_id, texto, _ in clientes_para_manana:
             self.listbox_clientes.insert(tk.END, f"{cliente_id} | {texto}")
         
         self.salida_texto.config(state="normal")
         self.salida_texto.delete("1.0", tk.END)
-        self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_para_hoy)} locales con despacho para hoy ({hoy}).")
+        self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_para_manana)} locales con despacho para mañana ({dia_manana}).")
         self.salida_texto.config(state="disabled")
 
     def agregar_cd(self):
-        """Abre un diálogo para agregar un nuevo Centro de Distribución."""
         nuevo_cd = simpledialog.askstring("Agregar CD", "Código del nuevo CD (ej: 6010):", parent=self.root)
         if nuevo_cd:
             zona_inicial = simpledialog.askstring("Agregar Zona", f"Nombre de la zona inicial para el CD {nuevo_cd} (ej: Urbana):", parent=self.root)
             if zona_inicial:
                 try:
-                    db_execute("INSERT INTO zonas (nombre, cd) VALUES (?, ?)", (zona_inicial, nuevo_cd))
+                    add_zona(zona_inicial, nuevo_cd)
                     messagebox.showinfo("Éxito", "CD y Zona agregados.", parent=self.root)
                     self.refrescar_datos_locales_y_ui()
                 except sqlite3.IntegrityError:
                     messagebox.showerror("Error", "Esa combinación de Zona y CD ya existe.", parent=self.root)
 
     def agregar_zona_al_cd(self):
-        """Abre un diálogo para agregar una nueva Zona a un CD existente."""
         cd_seleccionado = self.combo_cd.get()
         if not cd_seleccionado:
             messagebox.showwarning("Atención", "Selecciona un CD primero.", parent=self.root)
@@ -210,22 +239,20 @@ class App:
         nueva_zona = simpledialog.askstring("Agregar Zona", f"Nombre de la nueva zona para el CD {cd_seleccionado}:", parent=self.root)
         if nueva_zona:
             try:
-                db_execute("INSERT INTO zonas (nombre, cd) VALUES (?, ?)", (nueva_zona, cd_seleccionado))
+                add_zona(nueva_zona, cd_seleccionado)
                 self.refrescar_datos_locales_y_ui()
                 self.combo_zona.set(nueva_zona)
             except sqlite3.IntegrityError:
                 messagebox.showerror("Error", "Esa combinación de Zona y CD ya existe.", parent=self.root)
     
     def agregar_cliente(self):
-        """Abre una ventana para agregar un nuevo cliente."""
         cd, zona = self.combo_cd.get(), self.combo_zona.get()
         if not cd or not zona:
             messagebox.showwarning("Atención", "Debes seleccionar un CD y una Zona.", parent=self.root); return
         
-        zona_id_res = db_query("SELECT id FROM zonas WHERE nombre=? AND cd=?", (zona, cd))
-        if not zona_id_res:
+        zona_id = get_zona_id(zona, cd)
+        if not zona_id:
             messagebox.showerror("Error", "La zona seleccionada no se encontró en la base de datos.", parent=self.root); return
-        zona_id = zona_id_res[0][0]
 
         top = tk.Toplevel(self.root); top.title("Agregar Cliente"); top.geometry("350x450")
         
@@ -250,8 +277,7 @@ class App:
                 dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
 
-                db_execute("INSERT INTO clientes (nombre, lon, lat, tipo_camion, zona_id, destination_id, dias_reparto) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (nombre, lon, lat, tipo, zona_id, dest_id, dias))
+                add_cliente(nombre, lon, lat, tipo, zona_id, dest_id, dias)
                 messagebox.showinfo("Éxito", "Cliente agregado.", parent=top)
                 top.destroy()
                 self.refrescar_datos_locales_y_ui()
@@ -263,7 +289,6 @@ class App:
         ttk.Button(top, text="Guardar Cliente", command=guardar, style="Accent.TButton").pack(pady=20)
     
     def editar_cliente(self):
-        """Abre una ventana para editar el cliente seleccionado."""
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
             messagebox.showwarning("Atención", "Selecciona un cliente para editar.", parent=self.root); return
@@ -296,8 +321,7 @@ class App:
                 dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
                 
-                db_execute("UPDATE clientes SET nombre=?, lon=?, lat=?, tipo_camion=?, destination_id=?, dias_reparto=? WHERE id=?",
-                           (nombre, lon, lat, tipo, dest_id, dias, cliente_id))
+                update_cliente(cliente_id, nombre, lon, lat, tipo, dest_id, dias)
                 messagebox.showinfo("Éxito", "Cliente actualizado.", parent=top)
                 top.destroy()
                 self.refrescar_datos_locales_y_ui()
@@ -310,19 +334,17 @@ class App:
         ttk.Button(top, text="Guardar Cambios", command=guardar_cambios, style="Accent.TButton").pack(pady=20)
     
     def eliminar_cliente(self):
-        """Elimina el/los cliente(s) seleccionado(s)."""
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
             messagebox.showwarning("Atención", "Selecciona al menos un cliente para eliminar."); return
         if messagebox.askyesno("Confirmar", f"¿Seguro que deseas eliminar {len(seleccion)} cliente(s)?"):
             for idx in reversed(seleccion):
                 cliente_id = int(self.listbox_clientes.get(idx).split(" | ")[0])
-                db_execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
+                delete_cliente(cliente_id)
             messagebox.showinfo("Éxito", "Cliente(s) eliminado(s).")
             self.refrescar_datos_locales_y_ui()
 
     def mostrar_camiones(self):
-        """Muestra una ventana para gestionar los camiones."""
         top = tk.Toplevel(self.root); top.title("Gestión de Camiones"); top.geometry("450x300")
         tree = ttk.Treeview(top, columns=("ID", "Patente", "Tipo"), show="headings")
         tree.heading("ID", text="ID"); tree.column("ID", width=50)
@@ -332,13 +354,12 @@ class App:
 
         def refrescar():
             tree.delete(*tree.get_children())
-            for row in db_query("SELECT id, patente, tipo FROM camiones ORDER BY patente"):
+            for row in get_all_camiones():
                 tree.insert("", "end", values=row)
         
         refrescar()
 
     def mostrar_historial_rutas(self):
-        """Muestra una ventana con el historial de rutas calculadas."""
         top = tk.Toplevel(self.root); top.title("Historial de Rutas"); top.geometry("700x400")
         tree = ttk.Treeview(top, columns=("Fecha", "Patente", "Clientes"), show="headings")
         tree.heading("Fecha", text="Fecha"); tree.column("Fecha", width=150)
@@ -346,11 +367,7 @@ class App:
         tree.heading("Clientes", text="Clientes"); tree.column("Clientes", width=400)
         tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        query = """
-            SELECT r.fecha, c.patente, r.clientes FROM rutas r
-            JOIN camiones c ON r.camion_id = c.id ORDER BY r.fecha DESC
-        """
-        for fecha, patente, clientes_str in db_query(query):
+        for fecha, patente, clientes_str in get_historial_rutas():
             if clientes_str:
                 clientes_ids = [int(cid) for cid in clientes_str.split(',')]
                 display_names = []
@@ -363,20 +380,16 @@ class App:
                 tree.insert("", "end", values=(fecha, patente, ", ".join(display_names)))
 
     def iniciar_calculo(self):
-        """Inicia el proceso de cálculo de la ruta en un hilo separado."""
         patente = self.entry_patente.get().strip().upper()
         if not validar_patente(patente):
             messagebox.showwarning("Entrada Inválida", "Formato de patente no válido."); return
         
         tipo_camion = self.combo_tipo.get()
-        camion_id = None
-        result = db_query("SELECT id FROM camiones WHERE patente = ?", (patente,))
-        if result:
-            camion_id = result[0][0]
-        else:
+        camion_id = get_camion_id_by_patente(patente)
+        
+        if not camion_id:
             if messagebox.askyesno("Camión Nuevo", f"La patente '{patente}' no existe. ¿Deseas agregarla como un camión tipo '{tipo_camion}'?"):
-                db_execute("INSERT INTO camiones (patente, tipo) VALUES (?, ?)", (patente, tipo_camion))
-                camion_id = db_query("SELECT id FROM camiones WHERE patente = ?", (patente,))[0][0]
+                camion_id = add_camion(patente, tipo_camion)
             else:
                 return
 
@@ -396,12 +409,10 @@ class App:
         thread.start()
 
     def ejecutar_y_actualizar_gui(self, camion_id, clientes_ids):
-        """Llama a la función de cálculo y luego actualiza la GUI con el resultado."""
         resultado = proceso_de_calculo(camion_id, clientes_ids, self.all_clientes_data)
         self.root.after(0, self.actualizar_gui_con_resultado, resultado)
 
     def actualizar_gui_con_resultado(self, resultado):
-        """Actualiza la interfaz de usuario con el resultado del cálculo."""
         self.salida_texto.config(state="normal")
         self.salida_texto.delete("1.0", tk.END)
         if 'error' in resultado:

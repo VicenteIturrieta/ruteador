@@ -1,12 +1,59 @@
 import pandas as pd
 from tkinter import filedialog
 from tkinter import messagebox
+from db import update_dias_reparto_by_dest_id, cliente_exists_by_dest_id
+
+def procesar_fix_planning():
+    """
+    Abre un archivo Excel 'FixPlanning', lee los días de reparto
+    y actualiza la base de datos de clientes de forma robusta.
+    """
+    filepath = filedialog.askopenfilename(
+        title="Selecciona el archivo Excel 'FixPlanning'",
+        filetypes=(("Archivos Excel", "*.xlsx"), ("Todos los archivos", "*.*"))
+    )
+    if not filepath:
+        return "Proceso cancelado por el usuario."
+
+    try:
+        df = pd.read_excel(filepath, dtype={'Local': str})
+        
+        dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+        if 'Local' not in df.columns:
+            return "Error: No se encontró la columna 'Local' en el archivo."
+
+        locales_actualizados = 0
+        locales_no_encontrados = 0
+
+        for _, row in df.iterrows():
+            try:
+                if pd.isna(row['Local']):
+                    continue
+                
+                local_id = int(row['Local'])
+                
+                dias_activos = []
+                for dia in dias_semana:
+                    if dia in df.columns and pd.notna(row[dia]):
+                        dias_activos.append(dia)
+                
+                dias_str = ",".join(dias_activos)
+                
+                if cliente_exists_by_dest_id(local_id):
+                    update_dias_reparto_by_dest_id(dias_str, local_id)
+                    locales_actualizados += 1
+                else:
+                    locales_no_encontrados += 1
+
+            except ValueError:
+                continue
+
+        return f"Proceso completado.\nLocales actualizados: {locales_actualizados}\nLocales no encontrados en la BD: {locales_no_encontrados}"
+
+    except Exception as e:
+        return f"Error al procesar el archivo FixPlanning: {e}"
 
 def procesar_despachos_del_dia():
-    """
-    Abre un diálogo para seleccionar un archivo Excel de planning, lee las pestañas
-    'Pendiente' y 'Shipping' para calcular el total de cajas por local.
-    """
     filepath = filedialog.askopenfilename(
         title="Selecciona el archivo Excel de Planning",
         filetypes=(("Archivos Excel", "*.xlsx"), ("Todos los archivos", "*.*"))

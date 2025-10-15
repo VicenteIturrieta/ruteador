@@ -5,10 +5,9 @@ import folium
 from datetime import datetime
 import configparser
 from tkinter import messagebox
-from db import db_execute
+from db import guardar_ruta
 
 def get_api_key():
-    """Lee la clave de API desde el archivo de configuración."""
     config = configparser.ConfigParser()
     try:
         config.read('config.ini')
@@ -25,10 +24,6 @@ api_key = get_api_key()
 client = openrouteservice.Client(key=api_key) if api_key else None
 
 def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes):
-    """
-    Calcula la ruta óptima utilizando OpenRouteService y OR-Tools.
-    Devuelve un diccionario con el texto de la ruta y el archivo del mapa.
-    """
     if not client:
         return {'error': "Cliente API no inicializado. Revisa tu clave de API."}
     if not camion_id or not clientes_seleccionados_ids:
@@ -72,8 +67,7 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
         
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         clientes_str = ",".join(map(str, clientes_seleccionados_ids))
-        db_execute("INSERT INTO rutas (camion_id, fecha, clientes) VALUES (?, ?, ?)", (camion_id, fecha, clientes_str))
-        
+        guardar_ruta(camion_id, fecha, clientes_str)
         tiempo_total_segundos = solution.ObjectiveValue()
         ruta_texto += f"\nTiempo total: {tiempo_total_segundos / 60:.2f} minutos\n"
         

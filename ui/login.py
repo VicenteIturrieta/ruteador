@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from db import db_query
+from db import verificar_credenciales
 
 class Login:
     def __init__(self, root):
@@ -35,7 +35,6 @@ class Login:
         ttk.Button(main_frame, text="Ingresar", command=self.verificar_login, style="Accent.TButton").pack(pady=10)
 
     def verificar_login(self, event=None):
-        """Verifica las credenciales del usuario contra la base de datos."""
         usuario = self.entry_user.get().strip()
         password = self.entry_pass.get().strip()
         
@@ -43,10 +42,10 @@ class Login:
             messagebox.showerror("Error", "Debes ingresar usuario y contraseña.")
             return
 
-        resultado = db_query("SELECT rol FROM usuarios WHERE usuario=? AND password=?", (usuario, password))
+        rol_obtenido = verificar_credenciales(usuario, password)
         
-        if resultado:
-            self.rol_usuario = resultado[0][0]
+        if rol_obtenido:
+            self.rol_usuario = rol_obtenido
             self.root.destroy()
         else:
             messagebox.showerror("Error", "Usuario o contraseña incorrectos.")
