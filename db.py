@@ -1,7 +1,8 @@
 import sqlite3
+import pandas as pd
+from tkinter import messagebox
 
 DB_FILE = "rutas.db"
-
 def db_query(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         return conn.cursor().execute(query, params).fetchall()
@@ -10,6 +11,38 @@ def db_execute(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         conn.cursor().execute(query, params)
         conn.commit()
+
+def importar_clientes_desde_excel(filepath):
+    try:
+        df = pd.read_excel(filepath)
+        required_cols = ['CD', 'Local', 'Zona', 'Nombre', 'Formato', 'Dirección']
+        if not all(col in df.columns for col in required_cols):
+            return f"Error: El archivo debe contener las columnas: {', '.join(required_cols)}"
+
+        clientes_para_db = []
+        for index, row in df.iterrows():
+            cliente_data = (
+                int(row['Local']),
+                row['Nombre'],
+                row.get('lat', None), 
+                row.get('lon', None), 
+                row['CD'],
+                row['Zona'],
+                row['Formato'],
+                row['Dirección']
+            )
+            clientes_para_db.append(cliente_data)
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.executemany("""
+                INSERT OR REPLACE INTO clientes (destination_number, nombre, lat, lon, cd, zona, formato, direccion) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, clientes_para_db)
+            conn.commit()
+        
+        return f"¡Éxito! Se procesaron {len(clientes_para_db)} clientes."
+    except Exception as e:
+        return f"Ocurrió un error al importar: {e}"
 
 def verificar_credenciales(usuario, password):
     resultado = db_query("SELECT rol FROM usuarios WHERE usuario=? AND password=?", (usuario, password))
@@ -110,17 +143,18 @@ def setup_database():
     )
     """)
     db_execute("""
-    CREATE TABLE IF NOT EXISTS clientes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT,
-        lon REAL NOT NULL,
-        lat REAL NOT NULL,
-        tipo_camion TEXT DEFAULT 'cualquiera',
-        zona_id INTEGER,
-        destination_id INTEGER UNIQUE NOT NULL,
-        dias_reparto TEXT,
-        FOREIGN KEY(zona_id) REFERENCES zonas(id)
-    )
+        CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_number INTEGER UNIQUE NOT NULL,
+            nombre TEXT,
+            formato TEXT,
+            direccion TEXT,
+            cd TEXT,
+            zona TEXT,
+            dias_entrega TEXT,
+            lat REAL,
+            lon REAL
+        )
     """)
     db_execute("""
     CREATE TABLE IF NOT EXISTS rutas (
@@ -140,3 +174,7 @@ def setup_database():
     """)
     _inicializar_tabla_usuarios()
     print("Base de datos verificada y lista.")
+
+if __name__ == "__main__":
+    setup_database()
+    messagebox.showinfo("Base de Datos", "Base de datos configurada correctamente.")

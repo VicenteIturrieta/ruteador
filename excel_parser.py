@@ -4,10 +4,6 @@ from tkinter import messagebox
 from db import update_dias_reparto_by_dest_id, cliente_exists_by_dest_id
 
 def procesar_fix_planning():
-    """
-    Abre un archivo Excel 'FixPlanning', lee los días de reparto
-    y actualiza la base de datos de clientes de forma robusta.
-    """
     filepath = filedialog.askopenfilename(
         title="Selecciona el archivo Excel 'FixPlanning'",
         filetypes=(("Archivos Excel", "*.xlsx"), ("Todos los archivos", "*.*"))
