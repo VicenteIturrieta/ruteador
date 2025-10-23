@@ -14,7 +14,7 @@ def procesar_fix_planning():
     try:
         df = pd.read_excel(filepath, dtype={'Local': str})
         
-        dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+        dias_semana = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sábado']
         if 'Local' not in df.columns:
             return "Error: No se encontró la columna 'Local' en el archivo."
 
@@ -76,7 +76,7 @@ def procesar_despachos_del_dia():
             required_cols = ["Destination #", "Order Quantity (WHPK)"]
             if all(col in df_pendiente.columns for col in required_cols):
                 df_p = df_pendiente[required_cols].copy()
-                df_p.rename(columns={"Destination #": "local_id", "Order Quantity (whpk)": "cajas"}, inplace=True)
+                df_p.rename(columns={"Destination #": "local_id", "Order Quantity (WHPK)": "cajas"}, inplace=True)
                 all_dataframes.append(df_p)
             else:
                 messagebox.showwarning("Advertencia", "No se encontraron las columnas 'Destination #' y/o 'Order Quantity (whpk)' en la pestaña 'Pendiente'.")

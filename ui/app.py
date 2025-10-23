@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 import sqlite3
 
 from db import  (
-    get_all_clientes_with_details, get_distinct_cds, get_zonas_by_cd,
+    get_all_clientes_with_details, get_distinct_cds_from_clientes, get_zonas_by_cd_from_clientes,
     add_zona, get_zona_id, add_cliente, update_cliente, delete_cliente,
-    get_all_camiones, get_historial_rutas, get_camion_id_by_patente, add_camion
+    get_all_camiones, get_historial_rutas, get_camion_id_by_patente, add_camion,importar_clientes_excel
 )
 from excel_parser import procesar_despachos_del_dia, procesar_fix_planning
 from route_creator import proceso_de_calculo, client
@@ -99,14 +99,16 @@ class App:
         self.combo_cd.pack(fill='x', padx=5, pady=(0, 10))
         ttk.Label(tab_filtros, text="Zona Geográfica:").pack(fill='x', pady=2)
         self.combo_zona = ttk.Combobox(tab_filtros, state="readonly")
-        self.combo_zona.bind("<<ComboboxSelected>>", self.cargar_clientes_por_zona)
+        self.combo_zona.bind("<<ComboboxSelected>>", self.refrescar_lista_clientes)
         self.combo_zona.pack(fill='x', padx=5)
 
         clientes_gestion_frame = ttk.LabelFrame(tab_gestion, text="Clientes", padding="10")
         clientes_gestion_frame.pack(fill="x", pady=5)
-        ttk.Button(clientes_gestion_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(fill='x', pady=2)
-        ttk.Button(clientes_gestion_frame, text="Editar Cliente", command=self.editar_cliente).pack(fill='x')
-        ttk.Button(clientes_gestion_frame, text="Eliminar Cliente", command=self.eliminar_cliente).pack(fill='x', pady=2)
+        ttk.Button(clientes_gestion_frame, text="Importar Clientes (Excel)", command=self.llamar_importar_clientes).pack(fill='x', pady=2)
+        #ttk.Button(clientes_gestion_frame, text="Agregar Cliente", command=self.agregar_cliente).pack(fill='x', pady=2)
+        ttk.Button(clientes_gestion_frame, text="Editar Cliente", command=self.editar_cliente_desde_lista).pack(fill='x')
+        ttk.Button(clientes_gestion_frame, text="Ver Todos los Clientes", command=self.mostrar_todos_los_clientes).pack(fill='x')
+        #ttk.Button(clientes_gestion_frame, text="Eliminar Cliente", command=self.eliminar_cliente).pack(fill='x', pady=2)
 
         zonas_cd_gestion_frame = ttk.LabelFrame(tab_gestion, text="Zonas y CDs", padding="10")
         zonas_cd_gestion_frame.pack(fill="x", pady=5)
@@ -148,12 +150,73 @@ class App:
             messagebox.showinfo("Resultado del Proceso", mensaje)
             self.refrescar_datos_locales_y_ui()
 
+    def llamar_importar_clientes(self):
+        mensaje = importar_clientes_excel()
+        messagebox.showinfo("Resultado de Importación", mensaje, parent=self.root)
+        if "Éxito" in mensaje:
+            self.refrescar_datos_locales_y_ui()
+
     def refrescar_datos_locales_y_ui(self):
         self.all_clientes_data = get_all_clientes_with_details()
         self.cargar_cds()
 
+    def refrescar_lista_clientes(self, event=None):
+        cd_filtro = self.combo_cd.get()
+        zona_filtro = self.combo_zona.get()
+        
+        self.listbox_clientes.delete(0, tk.END)
+
+        if self.despachos_pendientes:
+            dias_semana = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+            fecha_manana = datetime.now() + timedelta(days=1)
+            dia_manana = dias_semana[fecha_manana.weekday()]
+            
+            clientes_para_manana = []
+            clientes_fuera_filtro = 0 
+
+            for cliente in self.all_clientes_data:
+                cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _ = cliente
+                
+                if dest_id in self.despachos_pendientes:
+                    total_cajas = self.despachos_pendientes[dest_id] 
+                    tiene_despacho_valido = total_cajas > 0 and (not dias_reparto or dia_manana in dias_reparto)
+
+                    if tiene_despacho_valido:
+                        # Filtramos por CD y Zona
+                        if cd_cliente == cd_filtro and zona_cliente == zona_filtro:
+                            display_name = nombre if nombre else f"Local #{dest_id}"
+                            clientes_para_manana.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
+                        else:
+                            clientes_fuera_filtro += 1
+
+            clientes_para_manana.sort(key=lambda x: x[2])
+            for cliente_id, texto, _ in clientes_para_manana:
+                self.listbox_clientes.insert(tk.END, f"{cliente_id} | {texto}")
+            
+            self.salida_texto.config(state="normal")
+            self.salida_texto.delete("1.0", tk.END)
+            mensaje_feedback = f"Mostrando {len(clientes_para_manana)} locales con despacho para mañana ({dia_manana}) en {cd_filtro} - {zona_filtro}."
+            if clientes_fuera_filtro > 0:
+                mensaje_feedback += f"\nSe omitieron {clientes_fuera_filtro} locales con despacho de otras zonas/CDs."
+            self.salida_texto.insert(tk.END, mensaje_feedback)
+            self.salida_texto.config(state="disabled")
+
+        else:
+            clientes_filtrados = [c for c in self.all_clientes_data if c[5] == cd_filtro and c[6] == zona_filtro]
+            clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}")
+
+            for cliente in clientes_filtrados:
+                display_name = cliente[1] if cliente[1] else f"Local #{cliente[7]}"
+                self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
+            
+            self.salida_texto.config(state="normal")
+            self.salida_texto.delete("1.0", tk.END)
+            self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_filtrados)} locales maestros en {cd_filtro} - {zona_filtro}.")
+            self.salida_texto.config(state="disabled")
+
     def cargar_cds(self):
-        cds_query = get_distinct_cds()
+        cds_query = get_distinct_cds_from_clientes()
+        
         cds = [row[0] for row in cds_query]
         self.combo_cd['values'] = cds
         if cds:
@@ -164,14 +227,16 @@ class App:
 
     def cargar_zonas_por_cd(self, event=None):
         cd_seleccionado = self.combo_cd.get()
-        zonas_query = get_zonas_by_cd(cd_seleccionado)
+
+        zonas_query = get_zonas_by_cd_from_clientes(cd_seleccionado)
+        
         zonas = [row[0] for row in zonas_query]
         self.combo_zona['values'] = zonas
         if zonas:
             self.combo_zona.set(zonas[0])
         else:
             self.combo_zona.set("")
-        self.cargar_clientes_por_zona()
+        #self.cargar_clientes_por_zona()
 
     def cargar_clientes_por_zona(self, event=None):
         cd = self.combo_cd.get()
@@ -194,20 +259,31 @@ class App:
         
         messagebox.showinfo("Proceso finalizado", mensaje)
 
-        dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        cd_filtro = self.combo_cd.get()
+        zona_filtro = self.combo_zona.get()
+        
+        dias_semana = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sábado", "Domingo"]
         fecha_manana = datetime.now() + timedelta(days=1)
         dia_manana = dias_semana[fecha_manana.weekday()]
         
         self.listbox_clientes.delete(0, tk.END)
         
         clientes_para_manana = []
+        clientes_fuera_filtro = 0
+
         for cliente in self.all_clientes_data:
-            cliente_id, nombre, _, _, _, _, _, dest_id, dias_reparto = cliente
+            cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _ = cliente
+            
             if dest_id in self.despachos_pendientes:
-                if not dias_reparto or dia_manana in dias_reparto:
-                    total_cajas = self.despachos_pendientes[dest_id]
-                    display_name = nombre if nombre else f"Local #{dest_id}"
-                    clientes_para_manana.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
+                total_cajas = self.despachos_pendientes[dest_id] 
+                tiene_despacho_valido = total_cajas > 0 and (not dias_reparto or dia_manana in dias_reparto)
+
+                if tiene_despacho_valido:
+                    if cd_cliente == cd_filtro and zona_cliente == zona_filtro:
+                        display_name = nombre if nombre else f"Local #{dest_id}"
+                        clientes_para_manana.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
+                    else:
+                        clientes_fuera_filtro += 1
 
         clientes_para_manana.sort(key=lambda x: x[2])
         for cliente_id, texto, _ in clientes_para_manana:
@@ -288,18 +364,117 @@ class App:
 
         ttk.Button(top, text="Guardar Cliente", command=guardar, style="Accent.TButton").pack(pady=20)
     
-    def editar_cliente(self):
+    def mostrar_todos_los_clientes(self):
+        top = tk.Toplevel(self.root)
+        top.title("Gestión de Todos los Clientes")
+        top.geometry("900x600")
+
+        search_frame = ttk.Frame(top, padding=(10, 10, 10, 0))
+        search_frame.pack(fill='x')
+        ttk.Label(search_frame, text="Buscar por ID Local:").pack(side=tk.LEFT, padx=(0, 5))
+        search_entry = ttk.Entry(search_frame)
+        search_entry.pack(side=tk.LEFT, fill='x', expand=True, padx=5)
+
+        tree_frame = ttk.Frame(top, padding=(10, 10, 10, 10))
+        tree_frame.pack(fill='both', expand=True)
+
+        cols = ("db_id", "local_id", "nombre", "formato", "cd", "zona", "dias_entrega", "t_carrier")
+        display_cols = ("local_id", "nombre", "formato", "cd", "zona", "dias_entrega", "t_carrier")
+        headings = ("DB_ID", "ID Local", "Nombre", "Formato", "CD", "Zona", "Días Entrega", "T. Camión")
+        col_widths = (0, 80, 200, 100, 80, 100, 150, 80) 
+        
+        tree = ttk.Treeview(tree_frame, columns=cols, show="headings", displaycolumns=display_cols)
+        
+        for i, col in enumerate(cols):
+            tree.heading(col, text=headings[i], anchor='w')
+            tree.column(col, width=col_widths[i], anchor='w', stretch=True)
+
+        # Scrollbars
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        def poblar_tabla(filtro=""):
+            tree.delete(*tree.get_children()) 
+            
+            clientes_para_mostrar = self.all_clientes_data
+            if filtro:
+                clientes_para_mostrar = [
+                    c for c in self.all_clientes_data 
+                    if str(c[7]).strip().startswith(filtro) 
+                ]
+            
+            clientes_para_mostrar.sort(key=lambda x: x[7]) 
+
+            for cliente in clientes_para_mostrar:
+                valores = (
+                    cliente[0], # db_id (oculto)
+                    cliente[7], # destination_number
+                    cliente[1] if cliente[1] else "S/N", 
+                    cliente[9] if cliente[9] else "S/F", 
+                    cliente[5] if cliente[5] else "S/CD", 
+                    cliente[6] if cliente[6] else "S/Z", 
+                    cliente[8] if cliente[8] else "-",
+                    cliente[4] if cliente[4] else "S/T" # t_carrier
+                )
+                tree.insert("", "end", values=valores)
+
+        def ejecutar_busqueda(event=None):
+            filtro = search_entry.get().strip()
+            poblar_tabla(filtro)
+
+        search_button = ttk.Button(search_frame, text="Buscar", command=ejecutar_busqueda)
+        search_button.pack(side=tk.LEFT, padx=5)
+        search_entry.bind("<Return>", ejecutar_busqueda)
+        
+        def editar_seleccion_tabla():
+            seleccion = tree.focus() 
+            if not seleccion:
+                messagebox.showwarning("Atención", "Selecciona un cliente de la tabla para editar.", parent=top)
+                return
+            
+            item_data = tree.item(seleccion)
+            cliente_db_id = item_data['values'][0]
+            self._abrir_ventana_edicion(cliente_db_id)
+            ejecutar_busqueda()
+
+        edit_button = ttk.Button(search_frame, text="Editar Seleccionado", command=editar_seleccion_tabla)
+        edit_button.pack(side=tk.RIGHT, padx=5)
+        tree.bind("<Double-1>", lambda e: editar_seleccion_tabla())
+        poblar_tabla()
+        search_entry.focus()
+
+    def editar_cliente_desde_lista(self):
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
-            messagebox.showwarning("Atención", "Selecciona un cliente para editar.", parent=self.root); return
+            messagebox.showwarning("Atención", "Selecciona un cliente de la lista para editar.", parent=self.root)
+            return
         
-        cliente_id = int(self.listbox_clientes.get(seleccion[0]).split(" | ")[0])
-        cliente = next((c for c in self.all_clientes_data if c[0] == cliente_id), None)
-        if not cliente: return
+        try:
+            # El ID de la BD (PK) está al inicio del string de la listbox
+            cliente_id = int(self.listbox_clientes.get(seleccion[0]).split(" | ")[0])
+            self._abrir_ventana_edicion(cliente_id)
+        except (ValueError, IndexError):
+                messagebox.showerror("Error", "No se pudo obtener la ID del cliente seleccionado.", parent=self.root)
 
-        top = tk.Toplevel(self.root); top.title(f"Editar: {cliente[1] or f'Local #{cliente[7]}'}"); top.geometry("350x450")
-        
-        fields = {"ID Local (Excel):": cliente[7], "Nombre (Opcional):": cliente[1], "Longitud (Lon):": cliente[2], "Latitud (Lat):": cliente[3], "Días Reparto (,)": cliente[8]}
+    def _abrir_ventana_edicion(self, cliente_id):
+        cliente = next((c for c in self.all_clientes_data if c[0] == cliente_id), None)
+        if not cliente:
+            messagebox.showerror("Error", f"No se encontró el cliente (ID: {cliente_id}) en los datos locales.", parent=self.root)
+            return
+        top = tk.Toplevel(self.root)
+        top.title(f"Editar: {cliente[1] or f'Local #{cliente[7]}'} [DB_ID: {cliente[0]}]")
+        top.geometry("350x450")
+        fields = {
+            "ID Local (Excel):": cliente[7], # destination_number
+            "Nombre (Opcional):": cliente[1], # nombre
+            "Longitud (Lon):": cliente[2],    # lon
+            "Latitud (Lat):": cliente[3],     # lat
+            "Días Reparto (,)": cliente[8]     # dias_entrega
+        }
         entries = {}
         for field, value in fields.items():
             frm = ttk.Frame(top); frm.pack(fill='x', padx=10, pady=5)
@@ -307,9 +482,18 @@ class App:
             entry = ttk.Entry(frm); entry.insert(0, value if value is not None else ""); entry.pack(side='right', expand=True, fill='x')
             entries[field] = entry
 
+        # Combobox para Tipo de Camión (t_carrier)
         frm_tipo = ttk.Frame(top); frm_tipo.pack(fill='x', padx=10, pady=5)
         lbl_tipo = ttk.Label(frm_tipo, text="Tipo Camión Req.:", width=20); lbl_tipo.pack(side='left')
-        combo_tipo = ttk.Combobox(frm_tipo, values=["Largo", "Corto", "Dolly"], state="readonly"); combo_tipo.set(cliente[4]); combo_tipo.pack(side='right', expand=True, fill='x')
+        combo_tipo = ttk.Combobox(frm_tipo, values=["Largo", "Corto", "Dolly"], state="readonly")
+        
+        tipo_camion_actual = cliente[4] # t_carrier
+        if tipo_camion_actual in combo_tipo['values']:
+            combo_tipo.set(tipo_camion_actual)
+        else:
+            combo_tipo.current(0) # Valor por defecto si no coincide
+            
+        combo_tipo.pack(side='right', expand=True, fill='x')
 
         def guardar_cambios():
             if not messagebox.askyesno("Confirmar", "¿Guardar los cambios?", parent=top): return
@@ -322,6 +506,7 @@ class App:
                 tipo = combo_tipo.get()
                 
                 update_cliente(cliente_id, nombre, lon, lat, tipo, dest_id, dias)
+                
                 messagebox.showinfo("Éxito", "Cliente actualizado.", parent=top)
                 top.destroy()
                 self.refrescar_datos_locales_y_ui()
@@ -329,10 +514,10 @@ class App:
             except ValueError:
                 messagebox.showerror("Error de Formato", "ID Local, Longitud y Latitud deben ser números válidos.", parent=top)
             except sqlite3.IntegrityError:
-                 messagebox.showerror("Error de Duplicado", "Ya existe otro cliente con ese ID de Local.", parent=top)
+                    messagebox.showerror("Error de Duplicado", "Ya existe otro cliente con ese ID de Local.", parent=top)
 
         ttk.Button(top, text="Guardar Cambios", command=guardar_cambios, style="Accent.TButton").pack(pady=20)
-    
+
     def eliminar_cliente(self):
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
