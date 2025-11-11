@@ -102,24 +102,23 @@ def _inicializar_tabla_usuarios():
 def get_all_clientes_with_details():
     return db_query("""
         SELECT
-            id, nombre, lon, lat, t_carrier, cd, zona, destination_number, dias_entrega, formato
+            id, nombre, lon, lat, t_carrier, cd, zona, destination_number, dias_entrega, formato, exclusivo
         FROM
             clientes
         ORDER BY nombre
     """)
 
-def add_cliente(nombre, lon, lat, tipo_camion_ignorado, zona_id_ignorado, dest_id, dias_reparto):
-    #como agrego clientes con excel, puede que no se use.
+def add_cliente(nombre, lon, lat, tipo_camion, cd, zona, dest_id, dias_reparto):
     db_execute("""
-        INSERT INTO clientes (nombre, lon, lat, destination_number, dias_entrega)
-        VALUES (?, ?, ?, ?, ?)
-    """, (nombre, lon, lat, dest_id, dias_reparto))
+        INSERT INTO clientes (nombre, lon, lat, t_carrier, cd, zona, destination_number, dias_entrega)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (nombre, lon, lat, tipo_camion, cd, zona, dest_id, dias_reparto))
 
-def update_cliente(cliente_id, nombre, lon, lat, tipo_camion, dest_id, dias_reparto):
+def update_cliente(cliente_id, nombre, lon, lat, tipo_camion, dest_id, dias_reparto, exclusivo):
     db_execute("""
-        UPDATE clientes SET nombre=?, lon=?, lat=?, t_carrier=?, destination_number=?, dias_entrega=? 
+        UPDATE clientes SET nombre=?, lon=?, lat=?, t_carrier=?, destination_number=?, dias_entrega=?, exclusivo=? 
         WHERE id=?
-    """, (nombre, lon, lat, tipo_camion, dest_id, dias_reparto, cliente_id))
+    """, (nombre, lon, lat, tipo_camion, dest_id, dias_reparto, exclusivo, cliente_id))
 
 def delete_cliente(cliente_id):
     db_execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
@@ -187,21 +186,20 @@ def setup_database():
     )
     """)
     db_execute("""
-        CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            destination_number INTEGER UNIQUE NOT NULL, -- Columna 'Local'
-            nombre TEXT,
-            formato TEXT,       -- Nueva
-            direccion TEXT,     -- Nueva
-            cd TEXT,            -- Nueva
-            zona TEXT,          -- Nueva (antes era zona_id)
-            dias_entrega TEXT,  -- Se mantiene, se llenará con FixPlanning
-            lat REAL,           -- Nueva o actualizada
-            lon REAL,           -- Nueva o actualizada
-            t_carrier TEXT      -- Nueva ('T. Carrier')
-            -- Se elimina zona_id y tipo_camion (ahora es t_carrier)
-        )
-    """)
+    CREATE TABLE IF NOT EXISTS clientes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT,
+        lon REAL,
+        lat REAL,
+        t_carrier TEXT,
+        cd TEXT,
+        zona TEXT,
+        destination_number INTEGER UNIQUE,
+        dias_entrega TEXT,
+        formato TEXT,
+        direccion TEXT,
+        exclusivo INTEGER DEFAULT 0 
+    )""")
     db_execute("""
     CREATE TABLE IF NOT EXISTS rutas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,7 +216,7 @@ def setup_database():
         clientes_ids TEXT NOT NULL)
     """)
 
-    columnas_clientes = ['formato', 'direccion', 'cd', 'zona', 't_carrier', 'dias_entrega', 'lat', 'lon']
+    columnas_clientes = ['formato', 'direccion', 'cd', 'zona', 't_carrier', 'dias_entrega', 'lat', 'lon', 'exclusivo']
     for col in columnas_clientes:
         try:
             tipo_col = 'REAL' if col in ['lat', 'lon'] else 'TEXT'
@@ -227,6 +225,10 @@ def setup_database():
     try:
         db_execute("ALTER TABLE camiones ADD COLUMN capacidad INTEGER DEFAULT 100;")
     except sqlite3.OperationalError: pass
+    try:
+        db_execute("ALTER TABLE clientes ADD COLUMN exclusivo INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     _inicializar_tabla_usuarios()
 

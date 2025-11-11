@@ -29,9 +29,16 @@ class App:
         
         self.all_clientes_data = []
         self.despachos_pendientes = {}
+        
 
         self.setup_ui()
         self.refrescar_datos_locales_y_ui()
+
+    BODEGAS_CENTRALES = {
+        "6003": [],
+        "6010": [-72.093775, -36.562653],
+        "6004": [],
+    }
 
     def setup_ui(self):
         self.style = ttk.Style()
@@ -39,7 +46,6 @@ class App:
         COLOR_AMARILLO = "#FFCC00"
         COLOR_TEXTO_BLANCO = "#FFFFFF"
 
-        # Estilo para los botones principales de acción
         self.style.configure("Accent.TButton",
                             background=COLOR_ROJO,
                             foreground=COLOR_TEXTO_BLANCO,
@@ -112,8 +118,8 @@ class App:
 
         zonas_cd_gestion_frame = ttk.LabelFrame(tab_gestion, text="Zonas y CDs", padding="10")
         zonas_cd_gestion_frame.pack(fill="x", pady=5)
-        ttk.Button(zonas_cd_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
-        ttk.Button(zonas_cd_gestion_frame, text="Agregar Zona a CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
+        #ttk.Button(zonas_cd_gestion_frame, text="Agregar Nuevo CD", command=self.agregar_cd).pack(fill='x', pady=2)
+        #ttk.Button(zonas_cd_gestion_frame, text="Agregar Zona a CD", command=self.agregar_zona_al_cd).pack(fill='x', pady=2)
 
         camiones_gestion_frame = ttk.LabelFrame(tab_gestion, text="Camiones", padding="10")
         camiones_gestion_frame.pack(fill="x", pady=5)
@@ -175,7 +181,7 @@ class App:
             clientes_fuera_filtro = 0 
 
             for cliente in self.all_clientes_data:
-                cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _ = cliente
+                cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _, _ = cliente
                 
                 if dest_id in self.despachos_pendientes:
                     total_cajas = self.despachos_pendientes[dest_id] 
@@ -272,7 +278,7 @@ class App:
         clientes_fuera_filtro = 0
 
         for cliente in self.all_clientes_data:
-            cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _ = cliente
+            cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _, _ = cliente
             
             if dest_id in self.despachos_pendientes:
                 total_cajas = self.despachos_pendientes[dest_id] 
@@ -326,9 +332,10 @@ class App:
         if not cd or not zona:
             messagebox.showwarning("Atención", "Debes seleccionar un CD y una Zona.", parent=self.root); return
         
-        zona_id = get_zona_id(zona, cd)
-        if not zona_id:
-            messagebox.showerror("Error", "La zona seleccionada no se encontró en la base de datos.", parent=self.root); return
+        # zona_id ya no es necesario, la tabla clientes guarda el texto de cd y zona.
+        # zona_id = get_zona_id(zona, cd)
+        # if not zona_id:
+        #    messagebox.showerror("Error", "La zona seleccionada no se encontró en la base de datos.", parent=self.root); return
 
         top = tk.Toplevel(self.root); top.title("Agregar Cliente"); top.geometry("350x450")
         
@@ -353,7 +360,8 @@ class App:
                 dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
 
-                add_cliente(nombre, lon, lat, tipo, zona_id, dest_id, dias)
+                # Pasamos 'cd' y 'zona' (texto) en lugar de 'zona_id'
+                add_cliente(nombre, lon, lat, tipo, cd, zona, dest_id, dias)
                 messagebox.showinfo("Éxito", "Cliente agregado.", parent=top)
                 top.destroy()
                 self.refrescar_datos_locales_y_ui()
@@ -491,9 +499,16 @@ class App:
         if tipo_camion_actual in combo_tipo['values']:
             combo_tipo.set(tipo_camion_actual)
         else:
-            combo_tipo.current(0) # Valor por defecto si no coincide
+            combo_tipo.current(0)
             
         combo_tipo.pack(side='right', expand=True, fill='x')
+
+        frm_exclusivo = ttk.Frame(top); frm_exclusivo.pack(fill='x', padx=10, pady=10)
+        exclusivo_var = tk.BooleanVar()
+        exclusivo_var.set(bool(cliente[10])) 
+        
+        check_exclusivo = ttk.Checkbutton(frm_exclusivo, text=" Ruta Exclusiva (Cliente solo)", variable=exclusivo_var)
+        check_exclusivo.pack(side='left')
 
         def guardar_cambios():
             if not messagebox.askyesno("Confirmar", "¿Guardar los cambios?", parent=top): return
@@ -504,8 +519,8 @@ class App:
                 lat = float(entries["Latitud (Lat):"].get().strip())
                 dias = entries["Días Reparto (,)"].get().strip()
                 tipo = combo_tipo.get()
-                
-                update_cliente(cliente_id, nombre, lon, lat, tipo, dest_id, dias)
+                exclusivo = 1 if exclusivo_var.get() else 0
+                update_cliente(cliente_id, nombre, lon, lat, tipo, dest_id, dias, exclusivo)
                 
                 messagebox.showinfo("Éxito", "Cliente actualizado.", parent=top)
                 top.destroy()
@@ -567,21 +582,45 @@ class App:
     def iniciar_calculo(self):
         patente = self.entry_patente.get().strip().upper()
         if not validar_patente(patente):
-            messagebox.showwarning("Entrada Inválida", "Formato de patente no válido."); return
+            messagebox.showwarning("Entrada Inválida", "Formato de patente no válido.", parent=self.root); return
         
         tipo_camion = self.combo_tipo.get()
         camion_id = get_camion_id_by_patente(patente)
         
         if not camion_id:
-            if messagebox.askyesno("Camión Nuevo", f"La patente '{patente}' no existe. ¿Deseas agregarla como un camión tipo '{tipo_camion}'?"):
-                camion_id = add_camion(patente, tipo_camion)
+            if messagebox.askyesno("Camión Nuevo", f"La patente '{patente}' no existe. ¿Deseas agregarla como un camión tipo '{tipo_camion}'?", parent=self.root):
+                try:
+                    camion_id = add_camion(patente, tipo_camion)
+                except sqlite3.Error as e:
+                    messagebox.showerror("Error DB", f"No se pudo guardar el camión '{patente}': {e}", parent=self.root)
+                    return
             else:
                 return
 
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
-            messagebox.showwarning("Selección Vacía", "Debes seleccionar al menos un cliente."); return
+            messagebox.showwarning("Selección Vacía", "Debes seleccionar al menos un cliente.", parent=self.root); return
         
+        clientes_exclusivos = []
+        for i in seleccion:
+            try:
+                cliente_db_id = int(self.listbox_clientes.get(i).split(" | ")[0])
+                
+                cliente_data = next((c for c in self.all_clientes_data if c[0] == cliente_db_id), None)
+                
+                if cliente_data and cliente_data[10] == 1: 
+                    clientes_exclusivos.append(cliente_data)
+                
+            except (ValueError, IndexError):
+                pass
+        if clientes_exclusivos and len(seleccion) > 1:
+            nombre_exclusivo = clientes_exclusivos[0][1] or f"Local #{clientes_exclusivos[0][7]}"
+            messagebox.showerror(
+                "Error de Regla",
+                f"El cliente '{nombre_exclusivo}' (ID: {clientes_exclusivos[0][7]}) está marcado como RUTA EXCLUSIVA.\n\nNo puede ser ruteado junto a otros clientes.",
+                parent=self.root
+            )
+            return 
         clientes_ids = [int(self.listbox_clientes.get(i).split(" | ")[0]) for i in seleccion]
         
         self.btn_calcular.config(state="disabled", text="Calculando...")
@@ -589,13 +628,48 @@ class App:
         self.salida_texto.insert(tk.END, "Procesando la ruta, por favor espera...")
         self.salida_texto.config(state="disabled")
 
-        thread = threading.Thread(target=self.ejecutar_y_actualizar_gui, args=(camion_id, clientes_ids))
+        cd_seleccionado = self.combo_cd.get()
+        if not cd_seleccionado or cd_seleccionado not in self.BODEGAS_CENTRALES or not self.BODEGAS_CENTRALES[cd_seleccionado]:
+            messagebox.showwarning("Error", f"El CD '{cd_seleccionado}' no tiene coordenadas de inicio (Bodega) definidas en la app.", parent=self.root)
+            self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima") # Reactivar el botón
+            return
+        
+        start_coords = self.BODEGAS_CENTRALES[cd_seleccionado]
+
+        thread = threading.Thread(target=self.ejecutar_y_actualizar_gui, args=(camion_id, clientes_ids, start_coords))
         thread.daemon = True
         thread.start()
 
-    def ejecutar_y_actualizar_gui(self, camion_id, clientes_ids):
-        resultado = proceso_de_calculo(camion_id, clientes_ids, self.all_clientes_data)
-        self.root.after(0, self.actualizar_gui_con_resultado, resultado)
+    def ejecutar_y_actualizar_gui(self, camion_id, clientes_ids, start_coords):
+        """
+        Ejecuta el cálculo en un hilo y actualiza la GUI con el resultado.
+        MODIFICADO: Pasa 'self.all_clientes_data' a proceso_de_calculo.
+        """
+        try:
+            # Llamamos a la función de route_creator con los 4 argumentos
+            resultado = proceso_de_calculo(
+                camion_id,
+                clientes_ids,
+                self.all_clientes_data, # <-- ESTE ES EL ARGUMENTO CRÍTICO
+                start_coords           # Pasa las coordenadas de inicio
+            )
+
+            if 'error' in resultado:
+                raise ValueError(resultado['error'])
+
+            map_file = resultado['map_file']
+            ruta_texto = resultado['ruta_texto']
+            
+            # Actualizar GUI (esto debe hacerse en el hilo principal)
+            self.root.after(0, self.actualizar_interfaz_con_resultado, ruta_texto, map_file)
+
+        except Exception as e:
+            error_message = f"Error al calcular la ruta:\n{e}"
+            self.root.after(0, self.actualizar_interfaz_con_error, error_message)
+        
+        finally:
+            # Reactivar el botón (en el hilo principal)
+            self.root.after(0, lambda: self.btn_calcular.config(state="normal", text="2. Calcular Ruta"))
 
     def actualizar_gui_con_resultado(self, resultado):
         self.salida_texto.config(state="normal")

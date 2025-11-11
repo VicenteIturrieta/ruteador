@@ -2,3 +2,7 @@ config.ini
 rutas.db
 .venv
 __pycache__/
+excel/FixPlanning ejemplo.xlsx
+excel/Pendiente ejemplo.xlsx
+excel/resultado_con_coordenadas.xlsx
+rutas.db

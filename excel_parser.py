@@ -14,9 +14,19 @@ def procesar_fix_planning():
     try:
         df = pd.read_excel(filepath, dtype={'Local': str})
         
-        dias_semana = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sábado']
+        mapa_dias = {
+            'Lunes': ['Lunes'],
+            'Martes': ['Martes'],
+            'Miercoles': ['Miercoles', 'Miércoles'], # Acepta ambos
+            'Jueves': ['Jueves'],
+            'Viernes': ['Viernes'],
+            'Sábado': ['Sábado', 'Sabado'] # Acepta ambos
+        }
+
         if 'Local' not in df.columns:
             return "Error: No se encontró la columna 'Local' en el archivo."
+        
+        columnas_excel = set(df.columns)
 
         locales_actualizados = 0
         locales_no_encontrados = 0
@@ -29,10 +39,19 @@ def procesar_fix_planning():
                 local_id = int(row['Local'])
                 
                 dias_activos = []
-                for dia in dias_semana:
-                    if dia in df.columns and pd.notna(row[dia]):
-                        dias_activos.append(dia)
                 
+                # --- INICIO DE LA MODIFICACIÓN ---
+                # Iteramos sobre nuestro mapa de días
+                for dia_estandar, posibles_nombres in mapa_dias.items():
+                    # Revisamos si alguno de los posibles nombres existe en el Excel
+                    for nombre_columna in posibles_nombres:
+                        if nombre_columna in columnas_excel and pd.notna(row[nombre_columna]):
+                            # Si se encuentra, guardamos el nombre estándar (sin tilde)
+                            dias_activos.append(dia_estandar)
+                            # Pasamos al siguiente día estándar (ej. Jueves)
+                            break 
+                # --- FIN DE LA MODIFICACIÓN ---
+
                 dias_str = ",".join(dias_activos)
                 
                 if cliente_exists_by_dest_id(local_id):
@@ -42,6 +61,7 @@ def procesar_fix_planning():
                     locales_no_encontrados += 1
 
             except ValueError:
+                # Omite filas donde 'Local' no sea un número
                 continue
 
         return f"Proceso completado.\nLocales actualizados: {locales_actualizados}\nLocales no encontrados en la BD: {locales_no_encontrados}"
