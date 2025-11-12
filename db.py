@@ -163,7 +163,7 @@ def add_camion(patente, tipo):
 def get_historial_rutas():
     return db_query("""
         SELECT r.fecha, c.patente, r.clientes FROM rutas r
-        JOIN camiones c ON r.camion_id = c.id ORDER BY r.fecha DESC
+        LEFT JOIN camiones c ON r.camion_id = c.id ORDER BY r.fecha DESC
     """)
 
 def guardar_ruta(camion_id, fecha, clientes_str):

@@ -29,8 +29,9 @@ def proceso_de_calculo(camion_id, clientes_seleccionados_ids, todos_los_clientes
     """
     if not client:
         return {'error': "Cliente API no inicializado. Revisa tu clave de API."}
-    if not camion_id or not clientes_seleccionados_ids:
-        return {'error': "Selecciona un camión y al menos un cliente."}
+    
+    if not clientes_seleccionados_ids:
+        return {'error': "Selecciona al menos un cliente."}
     
     try:
         # --- PASO 1: RECOLECTAR COORDENADAS (LOCS) ---

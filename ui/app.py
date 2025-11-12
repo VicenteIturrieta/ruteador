@@ -5,6 +5,7 @@ import re
 import webbrowser
 from datetime import datetime, timedelta
 import sqlite3
+import math
 
 from db import  (
     get_all_clientes_with_details, get_distinct_cds_from_clientes, get_zonas_by_cd_from_clientes,
@@ -26,7 +27,8 @@ class App:
         self.root.geometry("850x700")
         self.style = ttk.Style()
         self.style.configure(".", font=("Segoe UI", 10))
-        
+        self.clientes_ya_ruteados = set()
+        self.target_cajas = tk.StringVar(value="10000") #valor de cajas x trailer, cambiar después para que cada CD tenga el suyo
         self.all_clientes_data = []
         self.despachos_pendientes = {}
         
@@ -35,9 +37,9 @@ class App:
         self.refrescar_datos_locales_y_ui()
 
     BODEGAS_CENTRALES = {
-        "6003": [],
+        "6003": [-70.30957240719687, -23.76044036099112],
         "6010": [-72.093775, -36.562653],
-        "6004": [],
+        "6004": [-72.62655718628656, -38.7713653407215],
     }
 
     def setup_ui(self):
@@ -73,13 +75,25 @@ class App:
 
         top_frame = ttk.Frame(main_frame)
         top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        top_frame.grid_columnconfigure(1, weight=1)
+        top_frame.grid_columnconfigure(1, weight=0) # <-- El nuevo frame no se expande
+        top_frame.grid_columnconfigure(2, weight=1) # <-- El frame de camión (ahora col 2) sí
 
         self.btn_cargar_excel = ttk.Button(top_frame, text="1. Cargar Despachos (Excel)", command=self.cargar_y_filtrar_despachos, style="Accent.TButton")
         self.btn_cargar_excel.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="ew")
 
+        sugerir_frame = ttk.LabelFrame(top_frame, text="1.5 Sugerir Carga", padding="10")
+        sugerir_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(sugerir_frame, text="Target Cajas x Trailer:").pack(side=tk.LEFT, padx=5)
+        
+        entry_target = ttk.Entry(sugerir_frame, width=10, textvariable=self.target_cajas)
+        entry_target.pack(side=tk.LEFT, padx=5)
+        
+        btn_sugerir = ttk.Button(sugerir_frame, text="Sugerir", command=self.sugerir_carga)
+        btn_sugerir.pack(side=tk.LEFT, padx=5)
+
         camion_frame = ttk.LabelFrame(top_frame, text="2. Datos del Camión", padding="10")
-        camion_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        camion_frame.grid(row=0, column=2, padx=5, pady=5, sticky="ew") 
         ttk.Label(camion_frame, text="Patente:").pack(side=tk.LEFT, padx=5)
         self.entry_patente = ttk.Entry(camion_frame, width=15)
         self.entry_patente.pack(side=tk.LEFT, padx=5)
@@ -107,6 +121,13 @@ class App:
         self.combo_zona = ttk.Combobox(tab_filtros, state="readonly")
         self.combo_zona.bind("<<ComboboxSelected>>", self.refrescar_lista_clientes)
         self.combo_zona.pack(fill='x', padx=5)
+
+        self.sobrantes_var = tk.BooleanVar()
+        chk_sobrantes = ttk.Checkbutton(tab_filtros, 
+                                        text="Mostrar solo sobrantes (de todas las zonas)", 
+                                        variable=self.sobrantes_var, 
+                                        command=self.on_check_sobrantes_changed)
+        chk_sobrantes.pack(fill='x', padx=5, pady=(10, 0))
 
         clientes_gestion_frame = ttk.LabelFrame(tab_gestion, text="Clientes", padding="10")
         clientes_gestion_frame.pack(fill="x", pady=5)
@@ -169,56 +190,132 @@ class App:
     def refrescar_lista_clientes(self, event=None):
         cd_filtro = self.combo_cd.get()
         zona_filtro = self.combo_zona.get()
-        
         self.listbox_clientes.delete(0, tk.END)
+
+        mostrar_solo_sobrantes = self.sobrantes_var.get()
+
+        # Obtener coordenadas de la bodega para ordenar
+        can_sort_by_distance = False
+        start_lat, start_lon = None, None
+        
+        # Obtenemos las coords de la bodega del CD seleccionado
+        bodega_coords_lon_lat = self.BODEGAS_CENTRALES.get(cd_filtro) 
+        
+        if bodega_coords_lon_lat:
+            start_lon, start_lat = bodega_coords_lon_lat[0], bodega_coords_lon_lat[1]
+            can_sort_by_distance = True
 
         if self.despachos_pendientes:
             dias_semana = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sábado", "Domingo"]
             fecha_manana = datetime.now() + timedelta(days=1)
             dia_manana = dias_semana[fecha_manana.weekday()]
             
-            clientes_para_manana = []
+            clientes_para_mostrar = []
             clientes_fuera_filtro = 0 
 
             for cliente in self.all_clientes_data:
-                cliente_id, nombre, _, _, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _, _ = cliente
+                # cliente[2] = lon, cliente[3] = lat
+                cliente_id, nombre, cliente_lon, cliente_lat, _, cd_cliente, zona_cliente, dest_id, dias_reparto, _, _ = cliente
                 
                 if dest_id in self.despachos_pendientes:
                     total_cajas = self.despachos_pendientes[dest_id] 
                     tiene_despacho_valido = total_cajas > 0 and (not dias_reparto or dia_manana in dias_reparto)
 
                     if tiene_despacho_valido:
-                        # Filtramos por CD y Zona
-                        if cd_cliente == cd_filtro and zona_cliente == zona_filtro:
-                            display_name = nombre if nombre else f"Local #{dest_id}"
-                            clientes_para_manana.append((cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name))
-                        else:
-                            clientes_fuera_filtro += 1
+                        if cliente_id in self.clientes_ya_ruteados:
+                            continue
 
-            clientes_para_manana.sort(key=lambda x: x[2])
-            for cliente_id, texto, _ in clientes_para_manana:
+                        display_name = nombre if nombre else f"Local #{dest_id}"
+                        
+                        # Calcular distancia
+                        distancia = float('inf')
+                        if can_sort_by_distance:
+                            distancia = self._calculate_haversine(start_lat, start_lon, cliente_lat, cliente_lon)
+                        
+                        # Añadimos la distancia y el display_name (para orden alfabético si falla la distancia)
+                        cliente_tuple = (cliente_id, f"{display_name} - {int(total_cajas)} cajas", display_name, distancia)
+                        
+                        if mostrar_solo_sobrantes:
+                            clientes_para_mostrar.append(cliente_tuple)
+                        else:
+                            if cd_cliente == cd_filtro and zona_cliente == zona_filtro:
+                                clientes_para_mostrar.append(cliente_tuple)
+                            else:
+                                clientes_fuera_filtro += 1
+            
+            # Lógica de ordenamiento
+            if can_sort_by_distance and not mostrar_solo_sobrantes:
+                # Ordenar por distancia (índice 3)
+                clientes_para_mostrar.sort(key=lambda x: x[3])
+            else:
+                # Ordenar alfabéticamente (índice 2)
+                clientes_para_mostrar.sort(key=lambda x: x[2])
+            
+            # Desempacar 4 elementos
+            for cliente_id, texto, _, _ in clientes_para_mostrar:
                 self.listbox_clientes.insert(tk.END, f"{cliente_id} | {texto}")
             
+            # Actualizar el texto de feedback
             self.salida_texto.config(state="normal")
             self.salida_texto.delete("1.0", tk.END)
-            mensaje_feedback = f"Mostrando {len(clientes_para_manana)} locales con despacho para mañana ({dia_manana}) en {cd_filtro} - {zona_filtro}."
-            if clientes_fuera_filtro > 0:
-                mensaje_feedback += f"\nSe omitieron {clientes_fuera_filtro} locales con despacho de otras zonas/CDs."
+            
+            if mostrar_solo_sobrantes:
+                 mensaje_feedback = f"Mostrando {len(clientes_para_mostrar)} locales sobrantes (pendientes de ruteo) de TODAS las zonas."
+            else:
+                mensaje_feedback = f"Mostrando {len(clientes_para_mostrar)} locales con despacho para mañana ({dia_manana}) en {cd_filtro} - {zona_filtro}."
+                # Añadir feedback de ordenamiento
+                if can_sort_by_distance:
+                    mensaje_feedback += "\n(Ordenados por cercanía a la bodega)."
+                else:
+                    mensaje_feedback += "\n(Ordenados alfabéticamente)."
+
+                if clientes_fuera_filtro > 0:
+                    mensaje_feedback += f"\nSe omitieron {clientes_fuera_filtro} locales con despacho de otras zonas/CDs."
+            
             self.salida_texto.insert(tk.END, mensaje_feedback)
             self.salida_texto.config(state="disabled")
 
         else:
-            clientes_filtrados = [c for c in self.all_clientes_data if c[5] == cd_filtro and c[6] == zona_filtro]
-            clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}")
-
-            for cliente in clientes_filtrados:
-                display_name = cliente[1] if cliente[1] else f"Local #{cliente[7]}"
-                self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
-            
+            # Lógica para cuando NO hay despachos cargados
             self.salida_texto.config(state="normal")
             self.salida_texto.delete("1.0", tk.END)
-            self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_filtrados)} locales maestros en {cd_filtro} - {zona_filtro}.")
+            
+            if mostrar_solo_sobrantes:
+                self.salida_texto.insert(tk.END, "Modo 'Sobrantes': Carga primero un archivo de Despachos.")
+            else:
+                # Lógica original (mostrar clientes maestros)
+                clientes_filtrados = [c for c in self.all_clientes_data if c[5] == cd_filtro and c[6] == zona_filtro]
+                clientes_filtrados.sort(key=lambda x: x[1] or f"Local {x[7]}")
+
+                for cliente in clientes_filtrados:
+                    display_name = cliente[1] if cliente[1] else f"Local #{cliente[7]}"
+                    self.listbox_clientes.insert(tk.END, f"{cliente[0]} | {display_name}")
+                
+                self.salida_texto.insert(tk.END, f"Mostrando {len(clientes_filtrados)} locales maestros en {cd_filtro} - {zona_filtro}.")
+            
             self.salida_texto.config(state="disabled")
+
+    def _calculate_haversine(self, lat1, lon1, lat2, lon2):
+        R = 6371
+        try:
+            if any(v is None for v in [lat1, lon1, lat2, lon2]):
+                return float('inf')
+
+            lat1_rad = math.radians(float(lat1))
+            lon1_rad = math.radians(float(lon1))
+            lat2_rad = math.radians(float(lat2))
+            lon2_rad = math.radians(float(lon2))
+
+            dlon = lon2_rad - lon1_rad
+            dlat = lat2_rad - lat1_rad
+            
+            a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            
+            distance = R * c
+            return distance
+        except (ValueError, TypeError):
+            return float('inf')
 
     def cargar_cds(self):
         cds_query = get_distinct_cds_from_clientes()
@@ -576,26 +673,29 @@ class App:
                     if cliente_data:
                         display_name = cliente_data[1] if cliente_data[1] else f"Local #{cliente_data[7]}"
                         display_names.append(display_name)
-                
-                tree.insert("", "end", values=(fecha, patente, ", ".join(display_names)))
+                    patente_display = patente if patente else "Sin Asignar"
+                    tree.insert("", "end", values=(fecha, patente_display, ", ".join(display_names)))
 
     def iniciar_calculo(self):
-        patente = self.entry_patente.get().strip().upper()
-        if not validar_patente(patente):
-            messagebox.showwarning("Entrada Inválida", "Formato de patente no válido.", parent=self.root); return
-        
+        patente = self.entry_patente.get().strip().upper()        
         tipo_camion = self.combo_tipo.get()
-        camion_id = get_camion_id_by_patente(patente)
-        
-        if not camion_id:
-            if messagebox.askyesno("Camión Nuevo", f"La patente '{patente}' no existe. ¿Deseas agregarla como un camión tipo '{tipo_camion}'?", parent=self.root):
-                try:
-                    camion_id = add_camion(patente, tipo_camion)
-                except sqlite3.Error as e:
-                    messagebox.showerror("Error DB", f"No se pudo guardar el camión '{patente}': {e}", parent=self.root)
-                    return
-            else:
-                return
+        camion_id = None
+
+        if patente: # <-- Solo si el usuario escribió una patente
+            if not validar_patente(patente):
+                messagebox.showwarning("Entrada Inválida", "Formato de patente no válido.", parent=self.root); return
+            
+            camion_id = get_camion_id_by_patente(patente)
+            
+            if not camion_id:
+                if messagebox.askyesno("Camión Nuevo", f"La patente '{patente}' no existe. ¿Deseas agregarla como un camión tipo '{tipo_camion}'?", parent=self.root):
+                    try:
+                        camion_id = add_camion(patente, tipo_camion)
+                    except sqlite3.Error as e:
+                        messagebox.showerror("Error DB", f"No se pudo guardar el camión '{patente}': {e}", parent=self.root)
+                        return
+                else:
+                    return # El usuario canceló agregar el camión
 
         seleccion = self.listbox_clientes.curselection()
         if not seleccion:
@@ -660,33 +760,59 @@ class App:
             map_file = resultado['map_file']
             ruta_texto = resultado['ruta_texto']
             
-            # Actualizar GUI (esto debe hacerse en el hilo principal)
-            self.root.after(0, self.actualizar_gui_con_resultado, ruta_texto, map_file)
+            self.root.after(0, self.actualizar_gui_con_resultado, resultado, clientes_ids)
 
         except Exception as e:
             error_message = f"Error al calcular la ruta:\n{e}"
             self.root.after(0, self.actualizar_interfaz_con_error, error_message)
         
         finally:
-            # Reactivar el botón (en el hilo principal)
-            self.root.after(0, lambda: self.btn_calcular.config(state="normal", text="2. Calcular Ruta"))
+            pass
 
-    def actualizar_gui_con_resultado(self, resultado):
-        self.salida_texto.config(state="normal")
-        self.salida_texto.delete("1.0", tk.END)
-        if 'error' in resultado:
-            messagebox.showerror("Error en el Cálculo", resultado['error'])
-            self.salida_texto.insert(tk.END, f"Error: {resultado['error']}")
-        else:
-            self.salida_texto.insert(tk.END, resultado['ruta_texto'])
-            if messagebox.askyesno("Ruta Calculada", "¿Deseas ver el mapa?"):
-                try:
-                    webbrowser.open(resultado['map_file'])
-                except Exception as e:
-                    messagebox.showwarning("Advertencia", f"No se pudo abrir el mapa: {e}")
+    def sugerir_carga(self):
+        """
+        Selecciona automáticamente clientes de la lista visible
+        hasta alcanzar el 'Target Cajas' o un MÁXIMO DE 4 LOCALES.
+        """
+        try:
+            target_cajas = float(self.target_cajas.get())
+        except ValueError:
+            messagebox.showerror("Error", "El 'Target Cajas' debe ser un número válido.", parent=self.root)
+            return
+
+        self.listbox_clientes.selection_clear(0, tk.END)
+
+        cajas_acumuladas = 0
+        locales_acumulados = 0 
+        items_en_lista = self.listbox_clientes.get(0, tk.END)
         
-        self.salida_texto.config(state="disabled")
-        self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima")
+        box_regex = re.compile(r"-\s*([\d\.]+)\s+cajas$")
+
+        for index, item_text in enumerate(items_en_lista):
+            match = box_regex.search(item_text)
+            
+            if not match:
+                continue 
+
+            try:
+                cajas_cliente = float(match.group(1))
+            except ValueError:
+                continue
+
+            if (cajas_acumuladas + cajas_cliente) > target_cajas:
+                continue
+            if locales_acumulados >= 4:
+                break
+
+            cajas_acumuladas += cajas_cliente
+            locales_acumulados += 1
+            self.listbox_clientes.selection_set(index)
+        
+        messagebox.showinfo("Sugerencia de Carga", 
+                            f"Sugerencia completada.\n\n"
+                            f"Locales seleccionados: {locales_acumulados}\n"
+                            f"Total seleccionado: {int(cajas_acumuladas)} cajas.", 
+                            parent=self.root)
 
     def actualizar_gui_con_error(self, error_message):
             """
@@ -698,3 +824,71 @@ class App:
             self.salida_texto.insert(tk.END, error_message)
             self.salida_texto.config(state="disabled")
             messagebox.showerror("Error en el Cálculo", error_message, parent=self.root)
+
+    def on_check_sobrantes_changed(self):
+        """
+        Se llama al marcar/desmarcar el checkbox de 'sobrantes'.
+        Deshabilita los filtros de CD/Zona si está marcado.
+        """
+        is_checked = self.sobrantes_var.get()
+        self.combo_cd.config(state="disabled" if is_checked else "readonly")
+        self.combo_zona.config(state="disabled" if is_checked else "readonly")
+        self.refrescar_lista_clientes()
+
+    def actualizar_gui_con_resultado(self, resultado, clientes_ids_ruteados):
+        """
+        Actualiza la GUI con el resultado exitoso y marca los clientes como 'ruteados'.
+        (Esta función REEMPLAZA la que tenías antes).
+        """
+        self.salida_texto.config(state="normal")
+        self.salida_texto.delete("1.0", tk.END)
+        
+        if 'error' in resultado:
+            messagebox.showerror("Error en el Cálculo", resultado['error'])
+            self.salida_texto.insert(tk.END, f"Error: {resultado['error']}")
+        else:
+            self.salida_texto.insert(tk.END, resultado['ruta_texto'])
+            
+            # --- LÓGICA DE SOBRANTES ---
+            # Añadir los clientes ruteados a la lista de 'completados'
+            self.clientes_ya_ruteados.update(clientes_ids_ruteados)
+            # Refrescar la lista principal (esto los quitará de la vista)
+            self.refrescar_lista_clientes()
+            # --- FIN DE LÓGICA ---
+            
+            if messagebox.askyesno("Ruta Calculada", "¿Deseas ver el mapa?"):
+                try:
+                    webbrowser.open(resultado['map_file'])
+                except Exception as e:
+                    messagebox.showwarning("Advertencia", f"No se pudo abrir el mapa: {e}")
+        
+        self.salida_texto.config(state="disabled")
+        self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima")
+        """
+        Actualiza la GUI con el resultado exitoso y marca los clientes como 'ruteados'.
+        (Esta función REEMPLAZA la que tenías antes).
+        """
+        self.salida_texto.config(state="normal")
+        self.salida_texto.delete("1.0", tk.END)
+        
+        if 'error' in resultado:
+            messagebox.showerror("Error en el Cálculo", resultado['error'])
+            self.salida_texto.insert(tk.END, f"Error: {resultado['error']}")
+        else:
+            self.salida_texto.insert(tk.END, resultado['ruta_texto'])
+            
+            # --- LÓGICA DE SOBRANTES ---
+            # Añadir los clientes ruteados a la lista de 'completados'
+            self.clientes_ya_ruteados.update(clientes_ids_ruteados)
+            # Refrescar la lista principal (esto los quitará de la vista)
+            self.refrescar_lista_clientes()
+            # --- FIN DE LÓGICA ---
+            
+            if messagebox.askyesno("Ruta Calculada", "¿Deseas ver el mapa?"):
+                try:
+                    webbrowser.open(resultado['map_file'])
+                except Exception as e:
+                    messagebox.showwarning("Advertencia", f"No se pudo abrir el mapa: {e}")
+        
+        self.salida_texto.config(state="disabled")
+        self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima")
