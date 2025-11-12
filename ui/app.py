@@ -661,7 +661,7 @@ class App:
             ruta_texto = resultado['ruta_texto']
             
             # Actualizar GUI (esto debe hacerse en el hilo principal)
-            self.root.after(0, self.actualizar_interfaz_con_resultado, ruta_texto, map_file)
+            self.root.after(0, self.actualizar_gui_con_resultado, ruta_texto, map_file)
 
         except Exception as e:
             error_message = f"Error al calcular la ruta:\n{e}"
@@ -688,3 +688,13 @@ class App:
         self.salida_texto.config(state="disabled")
         self.btn_calcular.config(state="normal", text="Calcular Ruta Óptima")
 
+    def actualizar_gui_con_error(self, error_message):
+            """
+            Actualiza la GUI cuando ocurre un error en el hilo de cálculo.
+            Muestra el error en el widget de texto y en un messagebox.
+            """
+            self.salida_texto.config(state="normal")
+            self.salida_texto.delete("1.0", tk.END)
+            self.salida_texto.insert(tk.END, error_message)
+            self.salida_texto.config(state="disabled")
+            messagebox.showerror("Error en el Cálculo", error_message, parent=self.root)
