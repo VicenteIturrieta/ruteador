@@ -22,7 +22,7 @@ class App:
     def __init__(self, root, rol):
         self.rol = rol
         self.root = root
-        self.root.title("Ruteador de Camiones v0.3")
+        self.root.title("Ruteador de Camiones v0.4")
         self.root.geometry("850x700")
         self.style = ttk.Style()
         self.style.configure(".", font=("Segoe UI", 10))
